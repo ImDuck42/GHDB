@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quotidian — A community of words</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --surface: #161616;
+            --surface2: #1e1e1e;
+            --border: #2a2a2a;
+            --accent: #e8c97a;
+            --accent2: #c9a855;
+            --text: #f0ece3;
+            --muted: #7a7470;
+            --danger: #e07070;
+            --success: #7ec896;
+            --radius: 2px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 300;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ── Noise overlay ── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.5;
+        }
+
+        /* ── Layout ── */
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 0 2.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 64px;
+            position: sticky;
+            top: 0;
+            background: rgba(13, 13, 13, 0.92);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+        }
+
+        .logo {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.5rem;
+            font-style: italic;
+            color: var(--accent);
+            letter-spacing: -0.02em;
+            text-decoration: none;
+        }
+
+        .logo span {
+            color: var(--muted);
+            font-style: normal;
+            font-size: 0.7rem;
+            margin-left: 8px;
+            vertical-align: middle;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        nav {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .btn {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.72rem;
+            padding: 7px 16px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: transparent;
+            color: var(--text);
+        }
+
+        .btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #0d0d0d;
+            border-color: var(--accent);
+            font-weight: 500;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent2);
+            border-color: var(--accent2);
+            color: #0d0d0d;
+        }
+
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 0.65rem;
+        }
+
+        .btn-danger {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: var(--danger);
+            color: #0d0d0d;
+        }
+
+        main {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 3rem 2rem 6rem;
+        }
+
+        /* ── Hero ── */
+        .hero {
+            text-align: center;
+            padding: 4rem 0 3.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 3rem;
+        }
+
+        .hero-eyebrow {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--muted);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-bottom: 1.2rem;
+        }
+
+        .hero h1 {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(2.8rem, 6vw, 4.5rem);
+            font-weight: 400;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            color: var(--text);
+        }
+
+        .hero h1 em {
+            color: var(--accent);
+            font-style: italic;
+        }
+
+        .hero-sub {
+            margin-top: 1.2rem;
+            color: var(--muted);
+            font-size: 1rem;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+
+        /* ── Quote submit panel (shown when logged in) ── */
+        #submitPanel {
+            display: none;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 2rem;
+            margin-bottom: 2.5rem;
+        }
+
+        #submitPanel h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.1rem;
+            font-weight: 400;
+            font-style: italic;
+            margin-bottom: 1.2rem;
+            color: var(--accent);
+        }
+
+        .field {
+            margin-bottom: 1rem;
+        }
+
+        .field label {
+            display: block;
+            font-family: 'DM Mono', monospace;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .field textarea,
+        .field input[type=text] {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: 'Playfair Display', serif;
+            font-size: 1rem;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            resize: none;
+            transition: border-color 0.2s;
+            font-style: italic;
+        }
+
+        .field textarea:focus,
+        .field input[type=text]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .field textarea {
+            height: 100px;
+        }
+
+        .submit-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: flex-end;
+            margin-top: 0.5rem;
+        }
+
+        /* ── Quotes feed ── */
+        .feed-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 1.5rem;
+        }
+
+        .feed-header h2 {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--muted);
+        }
+
+        .feed-count {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.65rem;
+            color: var(--muted);
+        }
+
+        .quotes-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .quote-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 2rem 2.2rem;
+            position: relative;
+            transition: border-color 0.2s;
+            animation: fadeUp 0.4s ease both;
+        }
+
+        .quote-card:hover {
+            border-color: #3a3a3a;
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .quote-mark {
+            font-family: 'Playfair Display', serif;
+            font-size: 4rem;
+            line-height: 0;
+            color: var(--accent);
+            opacity: 0.25;
+            position: absolute;
+            top: 1.6rem;
+            left: 1.6rem;
+            pointer-events: none;
+        }
+
+        .quote-text {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.2rem;
+            font-style: italic;
+            line-height: 1.65;
+            color: var(--text);
+            padding-left: 1.2rem;
+        }
+
+        .quote-meta {
+            margin-top: 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-left: 1.2rem;
+        }
+
+        .quote-author {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.68rem;
+            color: var(--accent);
+            letter-spacing: 0.05em;
+        }
+
+        .quote-author span {
+            color: var(--muted);
+            margin-right: 4px;
+        }
+
+        .quote-by {
+            font-family: 'Playfair Display', serif;
+            font-size: 0.9rem;
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        .quote-actions {
+            display: flex;
+            gap: 6px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .quote-card:hover .quote-actions {
+            opacity: 1;
+        }
+
+        .quote-time {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.6rem;
+            color: var(--muted);
+            margin-top: 0.5rem;
+            padding-left: 1.2rem;
+        }
+
+        /* ── Auth modal ── */
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 200;
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-backdrop.open {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            width: min(420px, 95vw);
+            padding: 2.5rem;
+            position: relative;
+            animation: modalIn 0.25s ease;
+        }
+
+        @keyframes modalIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(-8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .modal h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.6rem;
+            font-weight: 400;
+            font-style: italic;
+            margin-bottom: 1.8rem;
+            color: var(--accent);
+        }
+
+        .modal .field input {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.95rem;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            transition: border-color 0.2s;
+        }
+
+        .modal .field input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .modal-footer {
+            margin-top: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .modal-switch {
+            font-size: 0.8rem;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .modal-switch a {
+            color: var(--accent);
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 1.2rem;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text);
+        }
+
+        /* ── Toast ── */
+        #toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            font-size: 0.75rem;
+            padding: 12px 20px;
+            border-radius: var(--radius);
+            z-index: 300;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: all 0.3s;
+            pointer-events: none;
+            letter-spacing: 0.04em;
+            max-width: 280px;
+        }
+
+        #toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        #toast.success {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        #toast.error {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        /* ── Setup prompt ── */
+        #setupPrompt {
+            background: var(--surface);
+            border: 1px solid var(--accent);
+            border-radius: var(--radius);
+            padding: 1.5rem 2rem;
+            margin-bottom: 2rem;
+            display: none;
+        }
+
+        #setupPrompt h3 {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--accent);
+            margin-bottom: 0.75rem;
+        }
+
+        #setupPrompt p {
+            font-size: 0.85rem;
+            color: var(--muted);
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        .setup-row {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .setup-row input {
+            flex: 1;
+            min-width: 180px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: 'DM Mono', monospace;
+            font-size: 0.8rem;
+            padding: 8px 12px;
+            border-radius: var(--radius);
+        }
+
+        .setup-row input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* ── Loading ── */
+        .loading {
+            text-align: center;
+            padding: 4rem;
+            font-family: 'DM Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--muted);
+            margin-left: 8px;
+            vertical-align: middle;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0
+            }
+        }
+
+        .empty {
+            text-align: center;
+            padding: 5rem 2rem;
+            font-family: 'Playfair Display', serif;
+            font-size: 1.2rem;
+            font-style: italic;
+            color: var(--muted);
+        }
+
+        /* ── User chip ── */
+        .user-chip {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-chip span {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .user-chip strong {
+            color: var(--accent);
+        }
+
+        hr.divider {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 1.5rem 0;
+        }
+
+        @media (max-width: 600px) {
+            header {
+                padding: 0 1.2rem;
+            }
+
+            main {
+                padding: 2rem 1.2rem 5rem;
+            }
+
+            .quote-text {
+                font-size: 1.05rem;
+            }
+
+            .hero h1 {
+                font-size: 2.2rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <a class="logo" href="#">Quotidian <span>community</span></a>
+        <nav id="navArea">
+            <button class="btn" id="loginBtn">Sign in</button>
+            <button class="btn btn-primary" id="registerBtn">Join free</button>
+        </nav>
+    </header>
+
+    <main>
+
+        <!-- First-run config -->
+        <div id="setupPrompt">
+            <h3>⚙ Configure your database</h3>
+            <p>This site uses <strong>github-db.js</strong> as a backend. Enter your GitHub repo details and an encoded
+                bot token to get started. The config is saved in your browser.</p>
+            <div class="setup-row">
+                <input id="cfgOwner" placeholder="github-username" />
+                <input id="cfgRepo" placeholder="repo-name" />
+                <input id="cfgToken" placeholder="Encoded bot token (GitHubDB.encodeToken(...))" style="flex:2" />
+                <button class="btn btn-primary" onclick="saveConfig()">Connect</button>
+            </div>
+        </div>
+
+        <div class="hero">
+            <p class="hero-eyebrow">Words worth keeping</p>
+            <h1>A place for <em>quotes</em><br>that matter</h1>
+            <p class="hero-sub">Share the words that moved you. Curated by the community, for the community.</p>
+        </div>
+
+        <!-- Submit panel (auth only) -->
+        <div id="submitPanel">
+            <h3>Share a quote</h3>
+            <div class="field">
+                <label>The quote</label>
+                <textarea id="qText" placeholder="The words themselves…"></textarea>
+            </div>
+            <div class="field">
+                <label>Attributed to <span style="color:var(--muted)">(optional)</span></label>
+                <input type="text" id="qAuthor" placeholder="e.g. Marcus Aurelius" />
+            </div>
+            <div class="submit-row">
+                <span id="submitMsg" style="font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--muted)"></span>
+                <button class="btn btn-primary" onclick="submitQuote()">Publish quote</button>
+            </div>
+        </div>
+
+        <!-- Feed -->
+        <div class="feed-header">
+            <h2>Latest quotes</h2>
+            <span class="feed-count" id="feedCount"></span>
+        </div>
+        <div id="feed" class="quotes-grid">
+            <div class="loading">Loading quotes</div>
+        </div>
+    </main>
+
+    <!-- Auth modal -->
+    <div class="modal-backdrop" id="authModal">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal()">✕</button>
+            <h2 id="modalTitle">Welcome back</h2>
+            <div class="field">
+                <label>Username</label>
+                <input type="text" id="authUser" placeholder="your_username" autocomplete="username" />
+            </div>
+            <div class="field">
+                <label>Password</label>
+                <input type="password" id="authPass" placeholder="••••••••" autocomplete="current-password" />
+            </div>
+            <div id="authError"
+                style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--danger);margin-top:0.5rem;min-height:1.2em;">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="authSubmitBtn" onclick="doAuth()">Sign in</button>
+                <p class="modal-switch" id="modalSwitch">
+                    No account? <a onclick="toggleMode()">Create one</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast"></div>
+
+    <script type="module">
+        // ── Import github-db.js ──────────────────────────────────────────
+        // We inline GitHubDB logic inline-compatible by using a dynamic import
+        // from the same directory, OR you can change this to your hosted URL.
+        // For the artifact to work standalone, we re-embed the essential parts.
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // CONFIGURATION — change these or use the setup prompt
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const DEFAULT_CONFIG = {
+            owner: '',
+            repo: '',
+            publicToken: '',
+        }
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        // ── Load github-db.js ──
+        let GitHubDB, DBError
+        try {
+            const mod = await import('./github-db.js')
+            GitHubDB = mod.GitHubDB || mod.default
+            DBError = mod.DBError
+        } catch (e) {
+            showToast('Could not load github-db.js — place it next to this file.', 'error')
+            document.getElementById('feed').innerHTML = `<div class="empty">github-db.js not found.<br><small style="font-size:0.75rem;font-family:'DM Mono',monospace">Place github-db.js in the same folder as this HTML file.</small></div>`
+            document.getElementById('setupPrompt').style.display = 'block'
+        }
+
+        // ── State ──
+        let db = null
+        let authMode = 'login'  // 'login' | 'register'
+
+        // ── Config helpers ──
+        function getConfig() {
+            const saved = localStorage.getItem('quotidian_cfg')
+            if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) }
+            return DEFAULT_CONFIG
+        }
+
+        window.saveConfig = function () {
+            const cfg = {
+                owner: document.getElementById('cfgOwner').value.trim(),
+                repo: document.getElementById('cfgRepo').value.trim(),
+                publicToken: document.getElementById('cfgToken').value.trim(),
+            }
+            if (!cfg.owner || !cfg.repo || !cfg.publicToken) {
+                showToast('Fill in all three fields.', 'error'); return
+            }
+            localStorage.setItem('quotidian_cfg', JSON.stringify(cfg))
+            document.getElementById('setupPrompt').style.display = 'none'
+            init(cfg)
+        }
+
+        // ── Initialise DB ──
+        async function init(cfg) {
+            if (!GitHubDB) return
+            if (!cfg.owner || !cfg.repo || !cfg.publicToken) {
+                document.getElementById('setupPrompt').style.display = 'block'
+                document.getElementById('feed').innerHTML = '<div class="empty">Configure your GitHub repo above to get started.</div>'
+                return
+            }
+            try {
+                db = GitHubDB.public({
+                    owner: cfg.owner,
+                    repo: cfg.repo,
+                    publicToken: cfg.publicToken,
+                }).rules({
+                    quotes: { read: 'public', write: 'auth' },
+                })
+                // Restore session
+                if (db.auth.isLoggedIn) updateNav(db.auth.currentUser)
+                loadQuotes()
+            } catch (e) {
+                showToast('Failed to init DB: ' + e.message, 'error')
+            }
+        }
+
+        // ── Load & render quotes ──
+        async function loadQuotes() {
+            const feed = document.getElementById('feed')
+            feed.innerHTML = '<div class="loading">Loading quotes</div>'
+            try {
+                const quotes = await db.collection('quotes').query(
+                    () => true,
+                    { sort: (a, b) => new Date(b.createdAt) - new Date(a.createdAt) }
+                )
+                document.getElementById('feedCount').textContent = quotes.length ? `${quotes.length} quote${quotes.length !== 1 ? 's' : ''}` : ''
+                if (!quotes.length) {
+                    feed.innerHTML = '<div class="empty">No quotes yet.<br>Be the first to share one.</div>'
+                    return
+                }
+                feed.innerHTML = quotes.map(renderQuote).join('')
+                attachDeleteHandlers()
+            } catch (e) {
+                feed.innerHTML = `<div class="empty" style="color:var(--danger)">${e.message}</div>`
+            }
+        }
+
+        function renderQuote(q) {
+            const isOwner = db?.auth?.isLoggedIn && db.auth.currentUser?.username === q.postedBy
+            const when = q.createdAt ? timeAgo(new Date(q.createdAt)) : ''
+            const deleteBtn = isOwner
+                ? `<button class="btn btn-sm btn-danger" data-id="${q.id}" onclick="deleteQuote('${q.id}')">delete</button>`
+                : ''
+            const attribution = q.author ? `<span class="quote-by">— ${escHtml(q.author)}</span>` : ''
+            return `
+    <div class="quote-card" id="card-${q.id}">
+      <div class="quote-mark">"</div>
+      <p class="quote-text">${escHtml(q.text)}</p>
+      <div class="quote-meta">
+        <div>
+          ${attribution}
+        </div>
+        <div class="quote-actions">${deleteBtn}</div>
+      </div>
+      <div class="quote-time">
+        <span class="quote-author"><span>by</span> ${escHtml(q.postedBy || 'anon')}</span>
+        &nbsp;·&nbsp; ${when}
+      </div>
+    </div>`
+        }
+
+        function attachDeleteHandlers() { }
+
+        window.deleteQuote = async function (id) {
+            if (!confirm('Delete this quote?')) return
+            try {
+                await db.collection('quotes').remove(id)
+                document.getElementById('card-' + id)?.remove()
+                showToast('Quote removed.', 'success')
+                const feed = document.getElementById('feed')
+                if (!feed.querySelector('.quote-card')) {
+                    feed.innerHTML = '<div class="empty">No quotes yet.</div>'
+                }
+            } catch (e) { showToast(e.message, 'error') }
+        }
+
+        // ── Submit quote ──
+        window.submitQuote = async function () {
+            const text = document.getElementById('qText').value.trim()
+            const author = document.getElementById('qAuthor').value.trim()
+            const msg = document.getElementById('submitMsg')
+            if (!text) { msg.textContent = 'The quote cannot be empty.'; return }
+            msg.textContent = 'Publishing…'
+            try {
+                await db.collection('quotes').add({
+                    text,
+                    author: author || null,
+                    postedBy: db.auth.currentUser.username,
+                })
+                document.getElementById('qText').value = ''
+                document.getElementById('qAuthor').value = ''
+                msg.textContent = ''
+                showToast('Quote published!', 'success')
+                loadQuotes()
+            } catch (e) {
+                msg.textContent = e.message
+                showToast(e.message, 'error')
+            }
+        }
+
+        // ── Auth ──
+        window.openLogin = function () { authMode = 'login'; syncModal(); openModal() }
+        window.openRegister = function () { authMode = 'register'; syncModal(); openModal() }
+        window.closeModal = function () { document.getElementById('authModal').classList.remove('open') }
+        window.toggleMode = function () { authMode = authMode === 'login' ? 'register' : 'login'; syncModal() }
+
+        function syncModal() {
+            const isReg = authMode === 'register'
+            document.getElementById('modalTitle').textContent = isReg ? 'Create account' : 'Welcome back'
+            document.getElementById('authSubmitBtn').textContent = isReg ? 'Create account' : 'Sign in'
+            document.getElementById('modalSwitch').innerHTML = isReg
+                ? `Already have one? <a onclick="toggleMode()">Sign in</a>`
+                : `No account? <a onclick="toggleMode()">Create one</a>`
+            document.getElementById('authError').textContent = ''
+        }
+
+        function openModal() {
+            document.getElementById('authModal').classList.add('open')
+            document.getElementById('authUser').focus()
+        }
+
+        window.doAuth = async function () {
+            const username = document.getElementById('authUser').value.trim()
+            const password = document.getElementById('authPass').value
+            const errEl = document.getElementById('authError')
+            errEl.textContent = ''
+            if (!username || !password) { errEl.textContent = 'Fill in both fields.'; return }
+            const btn = document.getElementById('authSubmitBtn')
+            btn.disabled = true; btn.textContent = authMode === 'login' ? 'Signing in…' : 'Creating…'
+            try {
+                if (authMode === 'login') {
+                    await db.auth.login(username, password)
+                } else {
+                    await db.auth.register(username, password)
+                }
+                closeModal()
+                updateNav(db.auth.currentUser)
+                document.getElementById('submitPanel').style.display = 'block'
+                showToast(authMode === 'login' ? `Welcome back, ${username}!` : `Account created, welcome ${username}!`, 'success')
+                loadQuotes() // re-render to show delete buttons
+            } catch (e) {
+                errEl.textContent = e.message
+            } finally {
+                btn.disabled = false; syncModal()
+                btn.textContent = authMode === 'login' ? 'Sign in' : 'Create account'
+            }
+        }
+
+        window.logout = function () {
+            db.auth.logout()
+            updateNav(null)
+            document.getElementById('submitPanel').style.display = 'none'
+            showToast('Signed out.', 'success')
+            loadQuotes()
+        }
+
+        function updateNav(user) {
+            const nav = document.getElementById('navArea')
+            if (user) {
+                nav.innerHTML = `
+      <div class="user-chip">
+        <span><strong>${escHtml(user.username)}</strong></span>
+        <button class="btn btn-sm" onclick="logout()">Sign out</button>
+      </div>`
+                document.getElementById('submitPanel').style.display = 'block'
+            } else {
+                nav.innerHTML = `
+      <button class="btn" id="loginBtn">Sign in</button>
+      <button class="btn btn-primary" id="registerBtn">Join free</button>`
+                document.getElementById('loginBtn').onclick = openLogin
+                document.getElementById('registerBtn').onclick = openRegister
+                document.getElementById('submitPanel').style.display = 'none'
+            }
+        }
+
+        // ── Button wiring ──
+        document.getElementById('loginBtn').onclick = openLogin
+        document.getElementById('registerBtn').onclick = openRegister
+
+        // Close modal on backdrop click
+        document.getElementById('authModal').addEventListener('click', e => {
+            if (e.target === document.getElementById('authModal')) closeModal()
+        })
+
+        // Enter key in auth form
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && document.getElementById('authModal').classList.contains('open')) doAuth()
+        })
+
+        // ── Helpers ──
+        window.showToast = function (msg, type = '') {
+            const t = document.getElementById('toast')
+            t.textContent = msg
+            t.className = 'show ' + type
+            clearTimeout(t._to)
+            t._to = setTimeout(() => { t.className = '' }, 3500)
+        }
+
+        function escHtml(s) {
+            if (!s) return ''
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        }
+
+        function timeAgo(date) {
+            const s = (Date.now() - date) / 1000
+            if (s < 60) return 'just now'
+            if (s < 3600) return `${Math.floor(s / 60)}m ago`
+            if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+            if (s < 604800) return `${Math.floor(s / 86400)}d ago`
+            return date.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })
+        }
+
+        // ── Boot ──
+        if (GitHubDB) {
+            const cfg = getConfig()
+            if (!cfg.owner) {
+                document.getElementById('setupPrompt').style.display = 'block'
+                document.getElementById('feed').innerHTML = '<div class="empty">Configure your GitHub repo above to get started.</div>'
+            } else {
+                init(cfg)
+            }
+        }
+    </script>
+</body>
+
+</html>
