@@ -506,32 +506,6 @@
             color: var(--danger);
         }
 
-        /* ── Setup prompt ── */
-        #setupPrompt {
-            background: var(--surface);
-            border: 1px solid var(--accent);
-            border-radius: var(--radius);
-            padding: 1.5rem 2rem;
-            margin-bottom: 2rem;
-            display: none;
-        }
-
-        #setupPrompt h3 {
-            font-family: 'DM Mono', monospace;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: var(--accent);
-            margin-bottom: 0.75rem;
-        }
-
-        #setupPrompt p {
-            font-size: 0.85rem;
-            color: var(--muted);
-            line-height: 1.6;
-            margin-bottom: 1rem;
-        }
-
         .setup-row {
             display: flex;
             gap: 0.75rem;
@@ -656,19 +630,6 @@
 
     <main>
 
-        <!-- First-run config -->
-        <div id="setupPrompt">
-            <h3>⚙ Configure your database</h3>
-            <p>This site uses <strong>github-db.js</strong> as a backend. Enter your GitHub repo details and an encoded
-                bot token to get started. The config is saved in your browser.</p>
-            <div class="setup-row">
-                <input id="cfgOwner" placeholder="github-username" />
-                <input id="cfgRepo" placeholder="repo-name" />
-                <input id="cfgToken" placeholder="Encoded bot token (GitHubDB.encodeToken(...))" style="flex:2" />
-                <button class="btn btn-primary" onclick="saveConfig()">Connect</button>
-            </div>
-        </div>
-
         <div class="hero">
             <p class="hero-eyebrow">Words worth keeping</p>
             <h1>A place for <em>quotes</em><br>that matter</h1>
@@ -740,9 +701,9 @@
         // CONFIGURATION — change these or use the setup prompt
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         const DEFAULT_CONFIG = {
-            owner: '',
-            repo: '',
-            publicToken: '',
+            owner: 'ImDuck42',
+            repo: 'GHDB',
+            publicToken: 'ICA0HSwtHRYQPAUPAx0dOwMgDhsqHhcjNSUvcRAsJwY2GnU6LDt3eg==',
         }
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -755,7 +716,6 @@
         } catch (e) {
             showToast('Could not load github-db.js — place it next to this file.', 'error')
             document.getElementById('feed').innerHTML = `<div class="empty">github-db.js not found.<br><small style="font-size:0.75rem;font-family:'DM Mono',monospace">Place github-db.js in the same folder as this HTML file.</small></div>`
-            document.getElementById('setupPrompt').style.display = 'block'
         }
 
         // ── State ──
@@ -779,7 +739,6 @@
                 showToast('Fill in all three fields.', 'error'); return
             }
             localStorage.setItem('quotidian_cfg', JSON.stringify(cfg))
-            document.getElementById('setupPrompt').style.display = 'none'
             init(cfg)
         }
 
@@ -787,7 +746,6 @@
         async function init(cfg) {
             if (!GitHubDB) return
             if (!cfg.owner || !cfg.repo || !cfg.publicToken) {
-                document.getElementById('setupPrompt').style.display = 'block'
                 document.getElementById('feed').innerHTML = '<div class="empty">Configure your GitHub repo above to get started.</div>'
                 return
             }
@@ -1004,15 +962,7 @@
         }
 
         // ── Boot ──
-        if (GitHubDB) {
-            const cfg = getConfig()
-            if (!cfg.owner) {
-                document.getElementById('setupPrompt').style.display = 'block'
-                document.getElementById('feed').innerHTML = '<div class="empty">Configure your GitHub repo above to get started.</div>'
-            } else {
-                init(cfg)
-            }
-        }
+        if (GitHubDB) init(DEFAULT_CONFIG);
     </script>
 </body>
 
