@@ -1,720 +1,815 @@
 # github-db.js
 
-> A complete serverless database module backed by a GitHub repository. One JS file, zero dependencies, zero backend.
-
-Every record is a JSON file committed directly to your repo. Every write is a git commit. You get CRUD, key-value storage, user authentication, access rules, and a free audit log — all from a single `import`.
-
----
-
-## How it works
-
-```
-your site  →  GitHub Contents API  →  commits JSON files  →  your repo
-your site  ←  raw.githubusercontent.com  ←  cached reads  ←  your repo
-```
-
-- **Writes** go through `api.github.com` using a Personal Access Token
-- **Reads** are served by `raw.githubusercontent.com` — CDN-cached, fast, no auth needed for public repos
-- **Every write** is a real git commit — message, author, timestamp, diff — stored forever
-- **Auth** is stored as a salted SHA-256-hashed user list in `data/_auth/users.json`
-- **No server**, no database, no build step, no config files
+> **[WARNING]**
+> This project is a proof of concept. It is **not suitable for production use**.  
+> GitHub is not a database. Every write consumes API rate limit quota and creates a permanent commit.  
+> Data is stored in plain JSON files in a public or private repo — anyone with repo access can read or modify it directly.  
+> There is no real authentication security, no access control enforcement at the GitHub level, and no protection against data loss from force pushes or repo deletion.  
 
 ---
 
-## Installation
-
-No package manager needed. Just copy the file.
-
-```html
-<!-- In your HTML -->
-<script type="module">
-  import GitHubDB from './github-db.js'
-</script>
-```
-
-```js
-// Or in any ES module
-import GitHubDB, { DBError } from './github-db.js'
-```
-
-The module targets modern browsers and any runtime that supports ES modules, `fetch`, and `crypto.subtle` (Chrome 60+, Firefox 57+, Safari 11+, Deno, Bun).
+A JSON/GitHub-based database where every write is a git commit.  
+Built on the GitHub Contents API with no server, no external database, and no infrastructure beyond a GitHub repo.  
+All data is stored as individual JSON files. Every record's full history is preserved as native git commits.  
 
 ---
 
-## Setup
+## Table of Contents  
 
-### 1. Create a GitHub repo
-
-This repo is your database. It can be public or private.
-
-```
-your-db-repo/
-└── data/              ← created automatically on first write
-    ├── _auth/
-    │   └── users.json
-    ├── _kv/
-    │   └── *.json
-    └── <collection>/
-        └── <id>.json
-```
-
-### 2. Create a Personal Access Token (PAT)
-
-Go to [github.com/settings/tokens/new](https://github.com/settings/tokens/new) and create a token with **`repo`** scope.
-
-> For open/public platforms, create a dedicated GitHub account (e.g. `myapp-bot`) and add it as a collaborator on the repo. Give it write access. Use that account's PAT as the bot token.
-
-### 3. Connect
-
-Pick the access mode that fits your use case — details in the next section.
-
----
-
-## Access modes
-
-There are three ways to connect, depending on who should be able to read and write.
-
-### Owner mode
-
-You, full access. Use your own PAT. Best for private tools, admin scripts, or server-side usage.
-
-```js
-const db = GitHubDB.owner({
-  owner:  'your-github-username',
-  repo:   'your-db-repo',
-  token:  'ghp_yourPersonalAccessToken',
-  branch: 'main',      // optional, default: 'main'
-  basePath: 'data',    // optional, default: 'data'
-})
-```
-
-### Public mode
-
-Embed a bot token so anyone visiting your site can read and write — no login required. The token is XOR-obfuscated so it isn't a plain readable string in view-source or a quick DevTools glance.
-
-**Step 1** — encode your bot token (run once in any browser console or Deno):
-
-```js
-import GitHubDB from './github-db.js'
-GitHubDB.encodeToken('ghp_yourBotToken')
-// → 'R3h4Q3....'  (paste this into your source)
-```
-
-**Step 2** — use the encoded string in your site:
-
-```js
-const db = GitHubDB.public({
-  owner:       'your-github-username',
-  repo:        'your-db-repo',
-  publicToken: 'R3h4Q3....',   // encoded string from step 1
-})
-```
-
-> **Security note:** XOR obfuscation is not encryption. A determined person can reverse it. It prevents casual inspection — not deliberate extraction. For anything sensitive, keep the repo private and use user auth instead.
-
-### User auth mode
-
-Users register with a username and password. Credentials are stored as SHA-256 hashes in the repo. The bot token handles all writes underneath — users never see or need a PAT.
-
-```js
-// Register a new account (returns authenticated db)
-const db = await GitHubDB.register({
-  owner:       'your-github-username',
-  repo:        'your-db-repo',
-  publicToken: 'R3h4Q3....',
-  username:    'alice',
-  password:    'hunter2',
-})
-
-// Log in to an existing account (returns authenticated db)
-const db = await GitHubDB.login({
-  owner:       'your-github-username',
-  repo:        'your-db-repo',
-  publicToken: 'R3h4Q3....',
-  username:    'alice',
-  password:    'hunter2',
-})
-```
-
-Both return a `GitHubDB` instance with `db.auth.currentUser` populated and a session saved to `sessionStorage` (expires after 8 hours, cleared on tab close).
+- [How it works](#how-it-works)  
+- [Requirements](#requirements)  
+- [Installation](#installation)  
+- [Initialization modes](#initialization-modes)  
+  - [Owner mode](#owner-mode)  
+  - [Public mode](#public-mode)  
+  - [CDN mode](#cdn-mode)  
+  - [Login mode](#login-mode)  
+  - [Register mode](#register-mode)  
+- [File layout](#file-layout)  
+- [Collections](#collections)  
+  - [add](#add)  
+  - [get](#get)  
+  - [list](#list)  
+  - [update](#update)  
+  - [replace](#replace)  
+  - [remove](#remove)  
+  - [upsert](#upsert)  
+  - [query](#query)  
+  - [findOne](#findone)  
+  - [count](#count)  
+  - [exists](#exists)  
+  - [bulkAdd](#bulkadd)  
+  - [bulkRemove](#bulkremove)  
+  - [clear](#clear)  
+  - [subscribe](#subscribe)  
+- [Subcollections](#subcollections)  
+- [Key-value store](#key-value-store)  
+- [Authentication](#authentication)  
+  - [register](#register)  
+  - [login](#login)  
+  - [logout](#logout)  
+  - [verifySession](#verifysession)  
+  - [changePassword](#changepassword)  
+  - [deleteAccount](#deleteaccount)  
+  - [listUsers](#listusers)  
+  - [setRoles](#setroles)  
+- [Permissions](#permissions)  
+  - [Permission levels](#permission-levels)  
+  - [Custom roles](#custom-roles)  
+  - [Per-record overrides](#per-record-overrides)  
+  - [Key-value permissions](#key-value-permissions)  
+  - [Lookup priority](#lookup-priority)  
+- [Token encoding](#token-encoding)  
+- [Cryptographic utilities](#cryptographic-utilities)  
+- [Commit history](#commit-history)  
+- [Connection validation](#connection-validation)  
+- [Error handling](#error-handling)  
+- [Concurrency and conflict resolution](#concurrency-and-conflict-resolution)  
+- [Session management](#session-management)  
+- [Rate limits and ETags](#rate-limits-and-etags)  
+- [Security considerations](#security-considerations)  
+- [Limitations](#limitations)  
 
 ---
 
-## Collections
+## How it works  
 
-A collection is a named folder of JSON records. Each record is one file: `data/<collection>/<id>.json`.
+Every record, KV entry, and user account is a single JSON file in a GitHub repository.  
+Reads call the GitHub Contents API (or optionally jsDelivr CDN).  
+Writes commit the new file content directly to the branch.  
 
-```js
-const posts = db.collection('posts')
+- Every write produces a permanent, auditable git commit.  
+- The database can be browsed, forked, or cloned like any other repo.  
+- No separate database process to run or maintain.  
+- Full history of any record is recoverable via git.  
+
+This design is optimized for low-to-moderate write frequency.  
+It is not a replacement for a relational or document database under high write load.  
+
+---
+
+## Requirements  
+
+- A GitHub repository (public or private).  
+- A GitHub PAT with `repo` scope, or a fine-grained token with read/write access to repository contents.  
+- A runtime with the Fetch API and Web Crypto API (`crypto.subtle`). Covers all modern browsers and Node.js 18+.  
+
+---
+
+## Installation  
+
+Copy `github-db.js` into your project and import directly.
+
+```js  
+import GitHubDB from './github-db.js'  
 ```
 
-### add(data)
+The module exports two values: the `GitHubDB` class (default export) and `DatabaseError`.  
 
-Create a new record. An `id`, `createdAt`, and `updatedAt` are added automatically.
-
-```js
-const post = await posts.add({
-  title:     'Hello world',
-  body:      'My first post.',
-  published: true,
-})
-// → { id: 'lf3k2-a8x9z', title: 'Hello world', ..., createdAt: '...', updatedAt: '...' }
-```
-
-You can supply your own `id` inside `data` to use a specific identifier instead of the auto-generated one.
-
-### get(id)
-
-Fetch a single record by id. Returns `null` if not found.
-
-```js
-const post = await posts.get('lf3k2-a8x9z')
-```
-
-### list()
-
-Fetch all records in the collection. Requests are made in parallel.
-
-```js
-const allPosts = await posts.list()
-```
-
-### update(id, changes)
-
-Partial update (patch). Only the provided fields are changed — everything else is preserved. Returns the full updated record. The `id` and `createdAt` fields are always protected and cannot be overwritten via `changes`.
-
-```js
-const updated = await posts.update('lf3k2-a8x9z', { title: 'Updated title' })
-```
-
-### replace(id, data)
-
-Full replacement. All fields are overwritten with `data`. The `id` and `createdAt` are preserved regardless. Returns the new record. Throws a `404` error if the record does not exist (use `upsert` if you want create-or-replace behaviour).
-
-```js
-const replaced = await posts.replace('lf3k2-a8x9z', { title: 'New', body: 'New body.' })
-```
-
-### remove(id)
-
-Delete a record. Returns `{ id, deleted: true }`.
-
-```js
-await posts.remove('lf3k2-a8x9z')
-```
-
-### upsert(id, data)
-
-Update if the record exists, create it if not. Useful for syncing external data.
-
-```js
-await posts.upsert('my-custom-id', { title: 'Either way this exists now' })
-```
-
-### query(filterFn, options?)
-
-Filter all records in memory using a predicate function. Supports optional `sort`, `limit`, and `offset`.
-
-```js
-// Simple filter
-const published = await posts.query(r => r.published === true)
-
-// With sort and limit
-const recent = await posts.query(
-  r => r.published,
-  {
-    sort:   (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
-    limit:  10,
-    offset: 0,
-  }
-)
-```
-
-### findOne(filterFn)
-
-Returns the first record matching the predicate, or `null`.
-
-```js
-const post = await posts.findOne(r => r.slug === 'hello-world')
-```
-
-### count(filterFn?)
-
-Return the total number of records, or the count of those matching a filter.
-
-```js
-const total     = await posts.count()
-const published = await posts.count(r => r.published)
-```
-
-### exists(id)
-
-Check whether a record exists. Single API call, no data returned.
-
-```js
-const alreadyThere = await posts.exists('lf3k2-a8x9z')
-```
-
-### bulkAdd(items)
-
-Add multiple records at once. Requests run in parallel. Returns array of created records.
-
-```js
-const created = await posts.bulkAdd([
-  { title: 'Post one' },
-  { title: 'Post two' },
-])
-```
-
-### bulkRemove(ids)
-
-Delete multiple records by id. Requests run in parallel.
-
-```js
-await posts.bulkRemove(['id1', 'id2', 'id3'])
-```
-
-### clear()
-
-Delete every record in the collection. Cannot be undone.
-
-```js
-await posts.clear()
-```
-
-### subscribe(callback, intervalMs?)
-
-Poll the collection for changes and call `callback` with the full record list whenever something changes. Returns an unsubscribe function. Default interval is 5000ms. An optional `onError` callback receives any errors that occur during polling — without it, errors are suppressed silently.
-
-```js
-const stop = posts.subscribe(
-  records => { console.log('posts changed:', records) },
-  3000,
-  err => { console.error('poll error:', err) },
-)
-
-// Later:
-stop()
+```js  
+import GitHubDB, { DatabaseError } from './github-db.js'  
 ```
 
 ---
 
-## Key-value store
+## Initialization modes  
 
-The KV store is for singletons — site config, counters, feature flags, anything that's one value per key. Each key maps to one file: `data/_kv/<key>.json`.
+`GitHubDB` is never constructed directly.  
+Use one of the static factory methods below. All return a `Promise<GitHubDB>`.  
 
-```js
-// Set a value (any JSON-serializable type)
-await db.kv.set('site-config', { theme: 'dark', lang: 'en' })
+### Owner mode  
 
-// Get a value (returns null if not set)
-const config = await db.kv.get('site-config')
+For server-side scripts, CI pipelines, or any context where your PAT is not exposed to end users.  
+Has full read/write access to the repository.  
 
-// Delete
-await db.kv.del('site-config')
+```js  
+const db = await GitHubDB.owner({  
+  owner:    'your-github-username',  
+  repo:     'your-repo-name',  
+  token:    'ghp_yourPersonalAccessToken',  
+  branch:   'main', // optional, default: 'main'  
+  basePath: 'data', // optional, default: 'data'  
+  useCDN:   false,  // optional, default: false  
+})  
+```
 
-// Check existence
-const exists = await db.kv.has('site-config')
+Owner mode rejects any token previously registered as a public token in the same repo.  
+This prevents accidental privilege escalation.  
 
-// Increment a counter (atomic-ish — built-in SHA retry on conflict)
-const views = await db.kv.incr('page-views')       // +1
-const score = await db.kv.incr('high-score', 50)   // +50
+### Public mode  
 
-// Get multiple keys at once → { key: value } map
-// Accepts spread args or a single array
-const { theme, lang } = await db.kv.mget('theme', 'lang')
-const vals = await db.kv.mget(['theme', 'lang', 'page-views'])
+For client-side apps where a bot token is embedded in source code.  
+Any visitor can interact with the database without their own PAT.  
+`publicToken` can be a plain PAT or a pre-encoded string (see [Token encoding](#token-encoding)).  
 
-// Set multiple keys at once
-await db.kv.mset({ theme: 'light', lang: 'de' })
+```js  
+const db = await GitHubDB.public({  
+  owner:       'your-github-username',  
+  repo:        'your-repo-name',  
+  publicToken: 'ghdb_enc_yourEncodedToken',  
+  branch:      'main', // optional  
+  basePath:    'data', // optional  
+  useCDN:      false,  // optional  
+  enrollToken: true,   // optional — set false to skip token registration  
+})  
+```
 
-// List all keys and values in the KV store
-const all = await db.kv.all()
-// → { 'site-config': { theme: 'dark' }, 'page-views': 42, ... }
+On first use the token is registered in `_kv/public.json` so owner mode can detect and reject it.  
+
+### CDN mode  
+
+Identical to public mode, but all reads go through the jsDelivr CDN instead of the GitHub API.  
+CDN reads don't count against the rate limit and are faster for distributed users.  
+Writes still go through the API.  
+
+```js  
+const db = await GitHubDB.public({  
+  owner:       'your-github-username',  
+  repo:        'your-repo-name',  
+  publicToken: 'ghdb_enc_yourEncodedToken',  
+  useCDN:      true,  
+})  
+```
+
+jsDelivr caches files for a period of time. Freshly committed content may not be immediately visible.  
+
+### Login mode  
+
+Initializes public mode and logs in a user in a single call.  
+Returns the db instance with an active session.  
+
+```js  
+const db = await GitHubDB.login({  
+  owner:       'your-github-username',  
+  repo:        'your-repo-name',  
+  publicToken: 'ghdb_enc_yourEncodedToken',  
+  username:    'alice',  
+  password:    'correct-horse-battery-staple',  
+  useCDN:      true,                           // optional — CDN reads after login, default: false  
+})  
+```
+
+> **Note:** The login request itself always goes through the GitHub API regardless of `useCDN`.  
+> CDN reads are unauthenticated and may be stale, so credential verification always uses the API directly.  
+> `useCDN` only affects subsequent collection and KV reads after the session is established.
+
+### Register mode  
+
+Initializes public mode and registers a new user in a single call.  
+Returns the db instance with an active session.  
+
+```js  
+const db = await GitHubDB.register({  
+  owner:       'your-github-username',  
+  repo:        'your-repo-name',  
+  publicToken: 'ghdb_enc_yourEncodedToken',  
+  username:    'alice',  
+  password:    'correct-horse-battery-staple',  
+  useCDN:      true, // optional — CDN reads after registration, default: false  
+})  
+```
+
+> **Note:** Registration always uses the GitHub API directly, regardless of `useCDN`.  
+> `useCDN` only affects subsequent collection and KV reads after the account is created.
+
+---
+
+## File layout  
+
+Given `basePath: 'data'` (the default):  
+
+```
+data/  
+  posts/  
+    lv2k3x-a1b2c3d4e5f6.json   <- collection record  
+    lv2k3y-a1b2c3d4e5f7.json  
+  comments/  
+    lv2k3z-a1b2c3d4e5f8.json  
+  _kv/  
+    theme.json                  <- key-value entry  
+    views.json  
+    admin-exists.json           <- internal auth sentinel  
+    public.json                 <- internal public-token registry  
+  _auth/  
+    alice.json                  <- user account (password hash stored here)  
+    bob.json  
+```
+
+Collection records include `id`, `createdAt`, and `updatedAt` added automatically.  
+KV files wrap values in `{ key, value, updatedAt }`.  
+Auth files store the password hash and roles but never expose them through public API methods.  
+
+---
+
+## Collections  
+
+Get a collection handle with `db.collection(name)`. All methods are async.  
+
+```js  
+const posts = db.collection('posts')  
+```
+
+### add  
+
+Create a new record. A unique ID and timestamps are added automatically.  
+Supply `data.id` to use a specific ID.  
+
+```js  
+const post = await posts.add({ title: 'Hello World', published: true })  
+// -> { id: 'lv2k3x-...', title: 'Hello World', published: true, createdAt: '...', updatedAt: '...' }  
+```
+
+### get  
+
+Fetch a single record by ID. Returns `null` if not found.  
+
+```js  
+const post = await posts.get('lv2k3x-a1b2c3d4e5f6')  
+```
+
+### list  
+
+Fetch all records in the collection. Up to 10 are fetched concurrently.  
+
+```js  
+const allPosts = await posts.list()  
+```
+
+### update  
+
+Partially update a record. Only provided fields are changed; all others are preserved.  
+`id` and `createdAt` cannot be altered. `updatedAt` is refreshed automatically.  
+
+```js  
+const updated = await posts.update('lv2k3x-a1b2c3d4e5f6', { title: 'Updated Title' })  
+```
+
+Throws a 404 `DatabaseError` if the record does not exist.  
+
+### replace  
+
+Fully replace a record. All fields are overwritten except `id` and `createdAt`, which are always preserved.  
+
+```js  
+const replaced = await posts.replace('lv2k3x-a1b2c3d4e5f6', { title: 'Replaced', published: false })  
+```
+
+### remove  
+
+Delete a record by ID. Returns `{ id, deleted: boolean }`.  
+
+```js  
+const result = await posts.remove('lv2k3x-a1b2c3d4e5f6')  
+// -> { id: 'lv2k3x-...', deleted: true }  
+```
+
+### upsert  
+
+Patch the record if it exists, or create it with the given ID if not.  
+
+```js  
+const record = await posts.upsert('my-custom-id', { title: 'Either way', published: true })  
+```
+
+### query  
+
+Filter all records in memory with a predicate. Supports optional sorting, limiting, and offsetting.  
+
+```js  
+const published = await posts.query(r => r.published)  
+
+const paginated = await posts.query(  
+  r => r.published,  
+  {  
+    sort:   (a, b) => new Date(b.createdAt) - new Date(a.createdAt),  
+    limit:  10,  
+    offset: 20,  
+  }  
+)  
+```
+
+`query` always loads the full collection first. For large collections, prefer direct `get` calls where the ID is known.  
+
+### findOne  
+
+Return the first record matching a predicate, or `null`.  
+
+```js  
+const post = await posts.findOne(r => r.slug === 'hello-world')  
+```
+
+### count  
+
+Count all records, or only those matching a predicate.  
+
+```js  
+const total     = await posts.count()  
+const published = await posts.count(r => r.published)  
+```
+
+### exists  
+
+Check whether a record with the given ID exists.  
+
+```js  
+const exists = await posts.exists('lv2k3x-a1b2c3d4e5f6')  
+// -> true or false  
+```
+
+### bulkAdd  
+
+Add multiple records in parallel.  
+
+```js  
+const newRecords = await posts.bulkAdd([  
+  { title: 'First' },  
+  { title: 'Second' },  
+])  
+```
+
+### bulkRemove  
+
+Delete multiple records by ID in parallel.  
+
+```js  
+await posts.bulkRemove(['id-one', 'id-two', 'id-three'])  
+```
+
+### clear  
+
+Delete every record in the collection. Irreversible in the live tree (git history retains them).  
+
+```js  
+await posts.clear()  
+```
+
+### subscribe  
+
+Poll for changes at a configurable interval.  
+The callback fires immediately on the first poll, then again whenever a change is detected.  
+Returns a stop function.  
+
+```js  
+const stop = posts.subscribe(  
+  ({ records, added, changed, removed }) => {  
+    console.log('all records:', records)  
+    console.log('new this tick:', added)  
+    console.log('modified this tick:', changed)  
+    console.log('deleted IDs:', removed)  
+  },  
+  5000,                                         // optional interval in ms, default: 5000  
+  (error) => console.error(error)               // optional error handler  
+)  
+
+stop() // cancel polling  
+```
+
+`subscribe` uses directory listing SHAs to detect changes without fetching every file on every tick.  
+Only changed or new files are re-fetched.  
+
+---
+
+## Subcollections  
+
+Nest collections by passing alternating `recordId, collectionName` pairs after the root name.  
+
+```js  
+// -> data/orgs/acme/teams/eng/members/<id>.json  
+const members = db.collection('orgs', 'acme', 'teams', 'eng', 'members')  
+
+await members.add({ name: 'Alice' })  
+await members.list()  
+```
+
+Passing an odd number of extra segments throws immediately.  
+
+---
+
+## Key-value store  
+
+Flat key-value storage backed by files at `<basePath>/_kv/<key>.json`. Access via `db.kv`.  
+Keys must contain only letters, numbers, hyphens, and underscores.  
+
+```js  
+await db.kv.set('theme', 'dark')  
+await db.kv.get('theme')                      // -> 'dark'  
+await db.kv.has('theme')                      // -> true  
+await db.kv.delete('theme')                   // -> { key: 'theme', deleted: true }  
+
+// Atomic-ish counter (optimistic lock via SHA retry)  
+await db.kv.increment('views')                // -> 1  
+await db.kv.increment('score', 5)             // increment by N  
+
+// Batch operations  
+await db.kv.getMany('key1', 'key2')           // -> { key1: val1, key2: val2 }  
+await db.kv.getMany(['key1', 'key2'])         // array form also accepted  
+await db.kv.setMany({ key1: 'a', key2: 'b' })  
+
+// Dump all user-facing KV entries  
+await db.kv.getAll()                          // -> { theme: 'dark', ... }  
+```
+
+`kv.getAll()` excludes internal keys used by the auth system (`admin-exists`, `public`).  
+
+---
+
+## Authentication  
+
+Username/password auth stored entirely in the repository.  
+User records live at `<basePath>/_auth/<username>.json`. Passwords are never stored in plaintext.  
+Access via `db.auth`.  
+
+### register  
+
+Create a new account. The first account to register is automatically assigned the `admin` role.  
+All subsequent accounts receive the `user` role.  
+
+Username: 2–32 characters, letters/numbers/hyphens/underscores only.  
+Password: minimum 8 characters.  
+
+```js  
+const user = await db.auth.register('alice', 'correct-horse-battery-staple')  
+// -> { id: '...', username: 'alice', roles: ['admin'], createdAt: '...' }  
+```
+
+Password hashes are never returned from any auth method.  
+
+### login  
+
+Verify credentials and start a session. Sessions expire after 8 hours.  
+
+```js  
+const user = await db.auth.login('alice', 'correct-horse-battery-staple')  
+// -> { id: '...', username: 'alice', roles: ['admin'], createdAt: '...' }  
+```
+
+Returns a 401 `DatabaseError` on invalid credentials.  
+The error message is intentionally generic to prevent username enumeration.  
+
+### logout  
+
+End the current session.  
+
+```js  
+db.auth.logout()  
+```
+
+### verifySession  
+
+Confirm the active session corresponds to a user that still exists in the repo.  
+If roles have changed since login, the session is refreshed automatically.  
+
+```js  
+const valid = await db.auth.verifySession() // -> true or false  
+```
+
+### changePassword  
+
+Change a user's password. The current password must be supplied.  
+
+```js  
+await db.auth.changePassword('alice', 'old-password', 'new-password')  
+// -> { ok: true }  
+```
+
+### deleteAccount  
+
+Permanently delete a user account. The account password must be supplied.  
+If the currently logged-in user deletes their own account, the session is cleared automatically.  
+
+```js  
+await db.auth.deleteAccount('alice', 'correct-horse-battery-staple')  
+// -> { deleted: true }  
+```
+
+### listUsers  
+
+Return all registered users. Password hashes are never included.  
+
+```js  
+const users = await db.auth.listUsers()  
+// -> [{ id, username, roles, createdAt }, ...]  
+```
+
+### setRoles  
+
+Assign one or more roles to a user. Only a logged-in admin can call this.  
+
+```js  
+await db.auth.setRoles('alice', 'moderator')  
+await db.auth.setRoles('alice', ['editor', 'moderator'])  
+```
+
+### Session properties  
+
+```js  
+db.auth.currentUser // { id, username, roles, createdAt } | null  
+db.auth.isLoggedIn  // boolean  
 ```
 
 ---
 
-## Auth
+## Permissions  
 
-User accounts are stored in `data/_auth/users.json`. Passwords are hashed using SHA-256 with a username-derived salt and a pepper before being stored — plaintext passwords never leave the client and are never committed to the repo. Password comparisons use a timing-safe equality check to mitigate timing-oracle attacks.
+Call `db.permissions(map)` after initialization to configure access rules. Chainable.  
+Any collection or KV key not listed defaults to `{ read: 'admin', write: 'admin' }`.  
 
-The first user to register is automatically assigned the `admin` role. All subsequent users get the `user` role.
-
-Sessions are stored in `sessionStorage` and expire after 8 hours. They are cleared when the tab is closed.
-
-### register(username, password)
-
-Create a new account. Returns the user object and creates a session.
-
-```js
-const user = await db.auth.register('alice', 'hunter2')
-// → { id: 'lf3...', username: 'alice', role: 'user', createdAt: '...' }
+```js  
+db.permissions({  
+  posts:          { read: 'public',                            write: 'auth'                    },  
+  settings:       { read: 'admin',                             write: 'admin'                   },  
+  comments:       { read: 'auth',                              write: 'auth'                    },  
+  drafts:         { read: 'editor',                            write: 'editor'                  },  
+  reports:        { read: ['moderator', 'analyst', 'auditor'], write: ['moderator', 'admin']    },  
+  'posts.abc123': { read: 'admin',                             write: 'admin'                   },  
+  _kv:            { read: 'auth',                              write: 'admin'                   },  
+  '_kv.theme':    { read: 'public',                            write: ['moderator', 'designer'] },  
+})  
 ```
 
-Validation rules:
-- Username: 2–32 characters, letters/numbers/underscore/hyphen only
-- Password: minimum 6 characters
-- Usernames are case-insensitive and must be unique
+### Permission levels  
 
-### login(username, password)
-
-Authenticate an existing user. Returns the user object and creates a session.
-
-```js
-const user = await db.auth.login('alice', 'hunter2')
-```
-
-### logout()
-
-Destroy the current session. Synchronous.
-
-```js
-db.auth.logout()
-```
-
-### currentUser
-
-The currently logged-in user, or `null`. Available immediately on page load if a valid session exists.
-
-```js
-if (db.auth.isLoggedIn) {
-  console.log(`Hello, ${db.auth.currentUser.username}`)
-  // → { id, username, role, createdAt }
-}
-```
-
-### changePassword(username, oldPassword, newPassword)
-
-Update a user's password. The old password must be correct.
-
-```js
-await db.auth.changePassword('alice', 'hunter2', 'correct-horse')
-```
-
-### deleteAccount(username, password)
-
-Permanently delete an account. Logs the user out. The password must be confirmed.
-
-```js
-await db.auth.deleteAccount('alice', 'correct-horse')
-// → { deleted: true }
-```
-
-### listUsers()
-
-Return all registered users (safe fields only — no password hashes).
-
-```js
-const users = await db.auth.listUsers()
-// → [{ id, username, role, createdAt }, ...]
-```
-
----
-
-## Access rules
-
-Define per-collection read/write permissions. Call `db.rules()` once after connecting.
-
-```js
-db.rules({
-  posts:    { read: 'public', write: 'auth'   },  // anyone reads, logged-in users write
-  drafts:   { read: 'auth',   write: 'auth'   },  // logged-in users only
-  settings: { read: 'owner',  write: 'owner'  },  // owner PAT only
-  logs:     { read: 'auth',   write: 'public' },  // anyone writes, logged-in users read
-})
-```
-
-`rules()` returns the `db` instance so you can chain it:
-
-```js
-const db = GitHubDB.public({ owner, repo, publicToken }).rules({
-  posts: { read: 'public', write: 'auth' },
-})
-```
-
-**Permission levels:**
-
-| Level | Who can access |
+| Level | Who passes |
 |---|---|
-| `'public'` | Anyone — no login required |
-| `'auth'` | Any logged-in user |
-| `'owner'` | Enforced by the token — only the owner PAT bypasses this |
+| `'public'` | Anyone, including unauthenticated visitors |
+| `'auth'` | Any logged-in user, regardless of role |
+| `'admin'` | Users whose roles array contains `'admin'` |
+| custom string | Users whose roles array contains that exact string |
+| array of strings | Users whose roles array contains at least one listed string |
 
-If no rule is defined for a collection, all operations are allowed.
+Admins always pass any permission check unconditionally.  
+`'public'` and `'auth'` are reserved and cannot be used as role names.  
+
+### Custom roles  
+
+Any non-reserved string is a valid role. Assign roles via `db.auth.setRoles()`.  
+A user can hold multiple roles simultaneously.  
+
+```js  
+// A user with roles ['editor', 'moderator'] passes checks for 'editor', 'moderator', or either in an array  
+```
+
+### Per-record overrides  
+
+Lock down a specific record using a `collection.recordId` key in the permissions map.  
+
+```js  
+db.permissions({  
+  posts:          { read: 'public', write: 'auth' },  
+  'posts.abc123': { read: 'admin',  write: 'admin' }, // this record is admin-only  
+})  
+```
+
+### Key-value permissions  
+
+Use `'_kv'` to restrict the entire KV store, or `'_kv.keyname'` to override a specific key.  
+
+```js  
+db.permissions({  
+  _kv:         { read: 'auth',   write: 'admin' },  
+  '_kv.theme': { read: 'public', write: 'admin' },  
+})  
+```
+
+### Lookup priority  
+
+For collections: `collection.recordId` > `collection` > default `'admin'`.  
+For KV: `_kv.keyName` > `_kv` > default `'admin'`.  
 
 ---
 
-## Utilities
+## Token encoding  
 
-### db.commits(path?, limit?)
+`github-db` provides a XOR+base64 obfuscation scheme for embedding a bot PAT in client-side code.  
+This deters casual scrapers but is not encryption.  
 
-Fetch the git commit history for any path in the repo. Returns the last `limit` commits (default 30). This is your free, immutable audit log.
+```js  
+// Run once in a trusted environment  
+const encoded = GitHubDB.encodeToken('ghp_myRealToken')  
+// -> 'ghdb_enc_...'  
 
-```js
-// Commit history for the entire data folder
-const history = await db.commits('data', 50)
-
-// History for a specific collection
-const postHistory = await db.commits('data/posts')
-
-// History for one record
-const recordHistory = await db.commits('data/posts/lf3k2-a8x9z.json')
+// Paste the encoded string into your source  
+const db = await GitHubDB.public({  
+  publicToken: 'ghdb_enc_...',  
+})  
 ```
 
-Each commit object:
+The library detects the `ghdb_enc_` prefix and decodes automatically before use.  
+Anyone with access to the source and the library can reverse the encoding. Treat the bot token accordingly.  
 
-```js
-{
-  sha:     'a3f8c2...',
-  message: 'posts: add lf3k2-a8x9z',
-  author:  'myapp-bot',
-  date:    '2025-03-18T14:22:01Z',
-  url:     'https://github.com/owner/repo/commit/a3f8c2...',
-}
+---
+
+## Cryptographic utilities  
+
+The internal PBKDF2 hashing functions are exposed as public static methods.  
+Useful for safely storing a PAT hash for later verification.  
+
+### GitHubDB.hashSecret(secret, context?)  
+
+Hashes a value with PBKDF2-SHA256, 200,000 iterations, and a random 128-bit salt.  
+Returns `<hex-salt>:<hex-derived-key>`.  
+An optional `context` string binds the hash to a specific use (e.g. a username).  
+
+```js  
+const hash = await GitHubDB.hashSecret('ghp_myToken', 'optional-context')  
+await db.kv.set('pat_hash', hash)  
 ```
 
-### db.rawFile(path)
+### GitHubDB.verifySecret(secret, storedHash, context?)  
 
-Read any JSON file from the repo via the CDN — fast, cached, no auth required (public repos only).
+Verify a plaintext value against a hash from `hashSecret`.  
+Uses constant-time comparison to prevent timing attacks.  
+`context` must match the one used during hashing.  
 
-```js
-const readme = await db.rawFile('README.md')
-const config = await db.rawFile('data/_kv/site-config.json')
-```
-
-### db.validate()
-
-Check that the token and repo are accessible. Throws a descriptive `DBError` if not. Useful for showing an error state on startup.
-
-```js
-try {
-  await db.validate()
-} catch (err) {
-  console.error('DB connection failed:', err.message)
-}
-```
-
-### GitHubDB.encodeToken(plainToken)
-
-Obfuscate a PAT for embedding in public source code.
-
-```js
-const encoded = GitHubDB.encodeToken('ghp_xxxxxxxxxxxx')
-// → 'R3h4Q3....'
-```
-
-### GitHubDB.decodeToken(encoded)
-
-Reverse the obfuscation. Useful for debugging.
-
-```js
-const plain = GitHubDB.decodeToken('R3h4Q3....')
-// → 'ghp_xxxxxxxxxxxx'
+```js  
+const ok = await GitHubDB.verifySecret('ghp_myToken', hash)  
+// -> true or false  
 ```
 
 ---
 
-## Error handling
+## Commit history  
 
-All async methods throw `DBError` on failure. Catch it to handle gracefully.
+Every write commits to the repo with a human-readable message.  
+Collections use `<collectionName>: <operation> <id>`. KV uses `kv: set <key>`.  
 
-```js
-import GitHubDB, { DBError } from './github-db.js'
+```js  
+// History for the whole repo (default limit: 30)  
+const commits = await db.getCommitHistory()  
 
-try {
-  const post = await db.collection('posts').get('nonexistent-id')
-  // returns null — not an error
-} catch (err) {
-  if (err instanceof DBError) {
-    console.error(err.message)  // human-readable message
-    console.error(err.status)   // HTTP status code, or null
-  }
-}
+// History for a specific file  
+const history = await db.getCommitHistory('data/posts/lv2k3x-a1b2c3d4e5f6.json', 50)  
+
+// Each entry: { sha, message, author, date, url }  
 ```
 
-Common status codes:
+---
 
-| Status | Meaning |
+## Connection validation  
+
+Verify the configured token and repository are reachable. Throws a `DatabaseError` if not.  
+
+```js  
+const repoMeta = await db.validateConnection()  
+```
+
+---
+
+## Error handling  
+
+All library errors are instances of `DatabaseError`, which extends `Error`.  
+It carries an `httpStatus` property matching the GitHub API status code (or `0` for non-HTTP errors).  
+
+```js  
+import { DatabaseError } from './github-db.js'  
+
+try {  
+  await posts.get('nonexistent-id')  
+} catch (err) {  
+  if (err instanceof DatabaseError) {  
+    console.log(err.message)    // human-readable description  
+    console.log(err.httpStatus) // e.g. 404, 401, 403, 409, 429  
+  }  
+}  
+```
+
+| Code | Cause |
 |---|---|
-| `401` | Bad token, or permission rule blocked the request |
-| `403` | Token valid but lacks repo write scope, or API rate limit exceeded (message includes reset time) |
-| `404` | File or collection not found (also returned as `null` from `.get()`) |
-| `409` | SHA conflict on concurrent write — retried automatically (up to 2 times) |
-| `422` | Validation error from GitHub API |
+| 400 | Invalid arguments (bad ID format, empty username, password too short) |
+| 401 | Not logged in, or wrong credentials |
+| 403 | Insufficient role for the required permission level |
+| 404 | Record or user not found |
+| 409 | Username already taken, or write conflict after exhausting retries |
+| 429 | GitHub API rate limit exceeded |
 
 ---
 
-## File layout
+## Concurrency and conflict resolution  
 
-Everything lives under `basePath` (default `data/`).
+The GitHub Contents API uses per-file SHA checksums for optimistic concurrency control.  
+If two writes target the same file simultaneously, one receives HTTP 409.  
+`github-db` retries automatically on 409 up to 5 times before propagating the error.  
 
-```
-data/
-├── _auth/
-│   └── users.json            ← all user accounts (hashed passwords)
-├── _kv/
-│   ├── site-config.json      ← kv: set('site-config', ...)
-│   └── page-views.json       ← kv: set('page-views', ...)
-├── posts/
-│   ├── lf3k2-a8x9z.json     ← one file per record
-│   └── lf3k3-b7y8w.json
-└── comments/
-    └── lf3k4-c6x7v.json
-```
-
-A record file looks like this:
-
-```json
-{
-  "id": "lf3k2-a8x9z",
-  "title": "Hello world",
-  "body": "My first post.",
-  "published": true,
-  "createdAt": "2025-03-18T14:22:01.000Z",
-  "updatedAt": "2025-03-18T14:22:01.000Z"
-}
-```
+Bulk operations and `list()` fetch up to 10 files concurrently.  
+ID generation uses `<timestamp-base36>-<crypto-random-base36>` to minimize collision probability.  
 
 ---
 
-## Rate limits
+## Session management  
 
-The GitHub API allows **5,000 authenticated requests per hour** per token. Each operation costs:
+Sessions are stored in `sessionStorage` in the browser and in an in-memory Map in Node.js.  
+Sessions expire 8 hours after creation.  
 
-| Operation | API calls |
-|---|---|
-| `get(id)` | 1 |
-| `add(data)` | 1 read (SHA) + 1 write = 2 |
-| `update(id, changes)` | 1 read + 1 write = 2 |
-| `list()` | 1 (dir listing) + N (one per record, parallel) |
-| `query(fn)` | same as `list()` |
-| `remove(id)` | 1 read + 1 delete = 2 |
-| `bulkAdd(N items)` | 2N |
-| `subscribe(cb, 5000)` | `list()` cost every 5 seconds |
+In the browser, the session is restored from `sessionStorage` on page reload as long as it hasn't expired.  
+There is no server-side session. All session state is client-side.  
 
-For a personal blog or small community, you'll never hit the limit. For high-traffic apps, cache `list()` results locally and only re-fetch when you know data has changed.
-
-Unauthenticated reads via `rawFile()` are served by the CDN and don't count against the API rate limit.
+Call `verifySession()` at startup to confirm the session is still valid and pick up any role changes since last login.  
 
 ---
 
-## Security model
+## Rate limits and ETags  
 
-| Concern | How it's handled |
-|---|---|
-| Password storage | SHA-256 hashed with a username salt + pepper. Timing-safe comparison. Plaintext never leaves the browser. |
-| Bot token in source | XOR + base64 obfuscated. Prevents casual inspection, not determined extraction. |
-| Session persistence | `sessionStorage` only. Cleared on tab close. 8-hour expiry. |
-| Concurrent writes | GitHub's SHA requirement is used as an optimistic lock. Conflicts retry automatically up to 2 times. |
-| `_auth/` visibility | On a public repo, `users.json` is world-readable. It contains only usernames and hashes — no emails, no plaintext passwords. |
-| Access rules | Enforced client-side. A user with direct API access can bypass them. For real enforcement, keep the repo private. |
+Directory listing reads use `If-None-Match` / `ETag` caching.  
+If contents haven't changed, GitHub returns HTTP 304 and the cached listing is reused without consuming quota.  
+Individual file reads and writes always hit the API directly.  
 
-**Recommendations by use case:**
-
-- **Personal tool / admin script:** owner mode, PAT never in source
-- **Community platform:** public repo + encoded bot token + user auth + `rules()`
-- **Sensitive data:** private repo + user auth — reads require auth token too
-- **Fully locked down:** private repo + owner mode only
+The GitHub API allows 5,000 authenticated requests per hour.  
+For read-heavy public apps, CDN mode routes all reads through jsDelivr and effectively removes the read rate limit at the cost of a small propagation delay.  
 
 ---
 
-## Complete example — a public guestbook
+## Security considerations  
 
-```html
-<script type="module">
-import GitHubDB from './github-db.js'
+**Password storage.**  
+Passwords are hashed with PBKDF2-SHA256 at 200,000 iterations with a per-user random 128-bit salt and a global pepper.  
+Reversing a stored hash is computationally expensive even with full repo access.  
 
-const db = GitHubDB.public({
-  owner:       'myname',
-  repo:        'my-guestbook',
-  publicToken: 'R3h4Q3....',   // GitHubDB.encodeToken('ghp_...')
-}).rules({
-  messages: { read: 'public', write: 'public' },
-})
+**Token exposure.**  
+In public mode, the embedded token is the credential for all writes.  
+Limit its permissions to read/write on this repository's contents only.  
+Do not reuse a token with broader access.  
 
-// Show all messages
-const messages = await db.collection('messages').list()
-messages
-  .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-  .forEach(m => {
-    console.log(`[${m.createdAt}] ${m.name}: ${m.text}`)
-  })
+**Token encoding.**  
+The XOR+base64 encoding deters automated scrapers but not manual inspection.  
+Treat the bot token as a shared secret with known limited scope, not a private credential.  
 
-// Post a new message
-await db.collection('messages').add({
-  name: 'Alice',
-  text: 'Great site!',
-})
-</script>
-```
+**Path traversal.**  
+All collection names, record IDs, and KV keys are validated against `^[a-zA-Z0-9_\-]+$` before constructing file paths.  
+Values outside this set throw immediately.  
+
+**Public token registry.**  
+Tokens used in public mode are registered in `_kv/public.json`.  
+Owner mode checks this list on init and refuses to proceed if the token appears in it.  
+This prevents a public token from being used for owner-mode access.  
+
+**Role escalation.**  
+Only a logged-in admin can assign roles.  
+`'public'` and `'auth'` are reserved and cannot be assigned as role names.  
 
 ---
 
-## Complete example — a blog with auth
+## Limitations  
 
-```js
-import GitHubDB from './github-db.js'
+**Write throughput.**  
+Each write is an individual HTTP PUT. High-frequency writes will exhaust the rate limit quickly.  
+This library suits apps where writes happen at human-interaction pace.  
 
-const CONFIG = {
-  owner:       'myname',
-  repo:        'my-blog',
-  publicToken: 'R3h4Q3....',
-}
+**No transactions.**  
+There is no multi-document transaction support. Operations across multiple files are not atomic.  
 
-// Set up rules once
-const db = GitHubDB.public(CONFIG).rules({
-  posts: { read: 'public', write: 'auth' },
-})
+**No server-side queries.**  
+`query`, `findOne`, and `count` load the entire collection before filtering in memory.  
+Large collections are slow and expensive to query.  
 
-// Register
-const user = await db.auth.register('alice', 'hunter2')
+**CDN propagation delay.**  
+In CDN mode, freshly committed data may not be visible for several minutes.  
 
-// Log in (on next visit)
-const user = await db.auth.login('alice', 'hunter2')
-console.log(db.auth.currentUser)  // { id, username, role, createdAt }
+**Session storage.**  
+In Node.js, sessions are in-memory and do not survive process restarts.  
+In the browser, sessions are limited to the tab's `sessionStorage` lifetime.  
 
-// Write a post (requires auth)
-const post = await db.collection('posts').add({
-  title:     'My first post',
-  body:      'Hello world.',
-  author:    db.auth.currentUser.username,
-  published: true,
-})
-
-// Read all posts (anyone)
-const posts = await db.collection('posts').query(
-  r => r.published,
-  { sort: (a, b) => new Date(b.createdAt) - new Date(a.createdAt) }
-)
-
-// Edit (auth required by rules)
-await db.collection('posts').update(post.id, { title: 'Updated title' })
-
-// Delete
-await db.collection('posts').remove(post.id)
-
-// Full commit audit log
-const history = await db.commits('data/posts', 20)
-
-// Log out
-db.auth.logout()
-```
-
----
-
-## Limitations
-
-- **No real-time push.** Changes are pulled via polling (`subscribe`) or manual `list()`. There is no WebSocket or Server-Sent Events support — GitHub's API doesn't offer it.
-- **No transactions.** Two concurrent writes to the same file will race. The SHA retry handles most conflicts, but there's no multi-record atomicity.
-- **No server-side filtering.** `query()` and `count()` fetch all records and filter in memory. This is fine up to a few hundred records per collection. Beyond that, consider a different tool.
-- **5MB per file.** GitHub's API limit for file content. A single record or KV value cannot exceed this.
-- **5,000 API calls/hour.** Per token. Shared across all users in public mode.
-- **Public repos expose `_auth/`.** `users.json` is world-readable on a public repo. It contains only hashed passwords, but if you want the user list to be private, use a private repo.
-- **Browser only.** Relies on `sessionStorage`, `crypto.subtle`, and `fetch`. Works in Deno/Bun if you polyfill `sessionStorage`.
-
----
-
-## License
-
-MIT. Do whatever you want with it.
+**No binary data.**  
+All storage is JSON. Binary content must be base64-encoded manually before storing.  
+**Repository size.**  
+GitHub has soft limits on repository size.  
+A database with millions of small files would approach those limits over time.
