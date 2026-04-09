@@ -4,8 +4,7 @@
 > This project is a proof of concept. It is **not suitable for production use**.  
 > GitHub is not a database. Every write consumes API rate limit quota and creates a permanent commit.  
 > Data is stored in plain JSON files in a public or private repo — anyone with repo access can read or modify it directly.  
-> There is no real authentication security, no access control enforcement at the GitHub level, and no protection against data loss from force pushes or repo deletion.  
-> [Example Website using this DB](https://github.com/ImDuck42/Quotipedia)
+> There is no real authentication security, no access control enforcement at the GitHub level, and no protection against data loss from force pushes or repo deletion.
 
 ---
 
@@ -23,9 +22,6 @@ All data is stored as individual JSON files. Every record's full history is pres
 - [Initialization modes](#initialization-modes)  
   - [Owner mode](#owner-mode)  
   - [Public mode](#public-mode)  
-  - [CDN mode](#cdn-mode)  
-  - [Login mode](#login-mode)  
-  - [Register mode](#register-mode)  
 - [File layout](#file-layout)  
 - [Collections](#collections)  
   - [add](#add)  
@@ -76,7 +72,7 @@ All data is stored as individual JSON files. Every record's full history is pres
 ## How it works  
 
 Every record, KV entry, and user account is a single JSON file in a GitHub repository.  
-Reads call the GitHub Contents API (or optionally jsDelivr CDN).  
+Reads call the GitHub Contents API or raw.githubusercontent.com (configurable).  
 Writes commit the new file content directly to the branch.  
 
 - Every write produces a permanent, auditable git commit.  
@@ -92,7 +88,7 @@ It is not a replacement for a relational or document database under high write l
 ## Requirements  
 
 - A GitHub repository (public or private).  
-- A GitHub PAT with `repo` scope, or a fine-grained token with read/write access to repository contents.  
+- A GitHub PAT with `repo` scope, or a fine-grained token with read/write access to repository contents and write to commits/metadata.  
 - A runtime with the Fetch API and Web Crypto API (`crypto.subtle`). Covers all modern browsers and Node.js 18+.  
 
 ---
@@ -102,14 +98,10 @@ It is not a replacement for a relational or document database under high write l
 Copy `github-db.js` into your project and import directly.
 
 ```js  
-import GitHubDB from './github-db.js'  
+import { GitHubDB, DatabaseError } from './github-db.js'  
 ```
 
-The module exports two values: the `GitHubDB` class (default export) and `DatabaseError`.  
-
-```js  
-import GitHubDB, { DatabaseError } from './github-db.js'  
-```
+The module exports two values: the `GitHubDB` class and `DatabaseError`.  
 
 ---
 
@@ -121,16 +113,18 @@ Use one of the static factory methods below. All return a `Promise<GitHubDB>`.
 ### Owner mode  
 
 For server-side scripts, CI pipelines, or any context where your PAT is not exposed to end users.  
-Has full read/write access to the repository.  
+Has full read/write access to the repository. Accepts an array of tokens for token pooling.
 
 ```js  
 const db = await GitHubDB.owner({  
-  owner:    'your-github-username',  
-  repo:     'your-repo-name',  
-  token:    'ghp_yourPersonalAccessToken',  
-  branch:   'main', // optional, default: 'main'  
-  basePath: 'data', // optional, default: 'data'  
-  useCDN:   false,  // optional, default: false  
+  owner:     'your-github-username',  
+  repo:      'your-repo-name',  
+  tokens:    ['ghp_yourPersonalAccessToken'], // array of PATs
+  branch:    'main',                          // optional, default: 'main'  
+  rawBranch: 'master',                        // optional, branch for raw reads (defaults to branch)
+  basePath:  'data',                          // optional, default: 'data'  
+  useRaw:    true,                            // optional, default: true - use raw.githubusercontent.com for reads
+  storage:   null,                            // optional, custom session storage for SSR
 })  
 ```
 
@@ -141,77 +135,23 @@ This prevents accidental privilege escalation.
 
 For client-side apps where a bot token is embedded in source code.  
 Any visitor can interact with the database without their own PAT.  
-`publicToken` can be a plain PAT or a pre-encoded string (see [Token encoding](#token-encoding)).  
+`publicTokens` can be plain PATs or pre-encoded strings (see [Token encoding](#token-encoding)).  
 
 ```js  
 const db = await GitHubDB.public({  
-  owner:       'your-github-username',  
-  repo:        'your-repo-name',  
-  publicToken: 'ghdb_enc_yourEncodedToken',  
-  branch:      'main', // optional  
-  basePath:    'data', // optional  
-  useCDN:      false,  // optional  
-  enrollToken: true,   // optional — set false to skip token registration  
+  owner:        'your-github-username',  
+  repo:         'your-repo-name',  
+  publicTokens: ['ghdb_enc_yourEncodedToken'], // array of tokens
+  branch:       'main',                        // optional, default: 'main'
+  rawBranch:    'master',                      // optional, branch for raw reads
+  basePath:     'data',                        // optional, default: 'data'  
+  useRaw:       true,                          // optional, default: true
+  enrollToken:  true,                          // optional, default: true — set false to skip token registration  
+  storage:      null,                          // optional, custom session storage for SSR
 })  
 ```
 
-On first use the token is registered in `_kv/public.json` so owner mode can detect and reject it.  
-
-### CDN mode  
-
-Identical to public mode, but all reads go through the jsDelivr CDN instead of the GitHub API.  
-CDN reads don't count against the rate limit and are faster for distributed users.  
-Writes still go through the API.  
-
-```js  
-const db = await GitHubDB.public({  
-  owner:       'your-github-username',  
-  repo:        'your-repo-name',  
-  publicToken: 'ghdb_enc_yourEncodedToken',  
-  useCDN:      true,  
-})  
-```
-
-jsDelivr caches files for a period of time. Freshly committed content may not be immediately visible.  
-
-### Login mode  
-
-Initializes public mode and logs in a user in a single call.  
-Returns the db instance with an active session.  
-
-```js  
-const db = await GitHubDB.login({  
-  owner:       'your-github-username',  
-  repo:        'your-repo-name',  
-  publicToken: 'ghdb_enc_yourEncodedToken',  
-  username:    'alice',  
-  password:    'correct-horse-battery-staple',  
-  useCDN:      true,                           // optional — CDN reads after login, default: false  
-})  
-```
-
-> **Note:** The login request itself always goes through the GitHub API regardless of `useCDN`.  
-> CDN reads are unauthenticated and may be stale, so credential verification always uses the API directly.  
-> `useCDN` only affects subsequent collection and KV reads after the session is established.
-
-### Register mode  
-
-Initializes public mode and registers a new user in a single call.  
-Returns the db instance with an active session.  
-
-```js  
-const db = await GitHubDB.register({  
-  owner:       'your-github-username',  
-  repo:        'your-repo-name',  
-  publicToken: 'ghdb_enc_yourEncodedToken',  
-  username:    'alice',  
-  password:    'correct-horse-battery-staple',  
-  useCDN:      true, // optional — CDN reads after registration, default: false  
-})  
-```
-
-> **Note:** Registration always uses the GitHub API directly, regardless of `useCDN`.  
-> `useCDN` only affects subsequent collection and KV reads after the account is created.
+On first use each token is registered in `_kv/_public.json` so owner mode can detect and reject it.  
 
 ---
 
@@ -229,8 +169,8 @@ data/
   _kv/  
     theme.json                  <- key-value entry  
     views.json  
-    admin-exists.json           <- internal auth sentinel  
-    public.json                 <- internal public-token registry  
+    _admin-exists.json          <- internal auth sentinel  
+    _public.json                <- internal public-token registry  
   _auth/  
     alice.json                  <- user account (password hash stored here)  
     bob.json  
@@ -270,10 +210,12 @@ const post = await posts.get('lv2k3x-a1b2c3d4e5f6')
 
 ### list  
 
-Fetch all records in the collection. Up to 10 are fetched concurrently.  
+Fetch all records in the collection, with optional pagination.  
 
 ```js  
 const allPosts = await posts.list()  
+// With pagination
+const page = await posts.list({ limit: 10, offset: 20 })  
 ```
 
 ### update  
@@ -306,7 +248,7 @@ const result = await posts.remove('lv2k3x-a1b2c3d4e5f6')
 
 ### upsert  
 
-Patch the record if it exists, or create it with the given ID if not.  
+Update the record if it exists; create it with the given `id` if it does not.  
 
 ```js  
 const record = await posts.upsert('my-custom-id', { title: 'Either way', published: true })  
@@ -359,7 +301,7 @@ const exists = await posts.exists('lv2k3x-a1b2c3d4e5f6')
 
 ### bulkAdd  
 
-Add multiple records in parallel.  
+Add multiple records in parallel (up to 10 concurrent).  
 
 ```js  
 const newRecords = await posts.bulkAdd([  
@@ -448,9 +390,15 @@ await db.kv.setMany({ key1: 'a', key2: 'b' })
 
 // Dump all user-facing KV entries  
 await db.kv.getAll()                          // -> { theme: 'dark', ... }  
+
+// Poll for changes  
+const stop = db.kv.subscribe(({ records, added, changed, removed }) => {
+  console.log('all:', records)
+}, 5000)
+stop() // cancel polling
 ```
 
-`kv.getAll()` excludes internal keys used by the auth system (`admin-exists`, `public`).  
+`kv.getAll()` excludes internal keys used by the auth system (`_admin-exists`, `_public`).  
 
 ---
 
@@ -537,7 +485,7 @@ const users = await db.auth.listUsers()
 Assign one or more roles to a user. Only a logged-in admin can call this.  
 
 ```js  
-await db.auth.setRoles('alice', 'moderator')  
+await db.auth.setRoles('alice', ['moderator'])  
 await db.auth.setRoles('alice', ['editor', 'moderator'])  
 ```
 
@@ -621,7 +569,7 @@ For KV: `_kv.keyName` > `_kv` > default `'admin'`.
 
 ## Token encoding  
 
-`github-db` provides a XOR+base64 obfuscation scheme for embedding a bot PAT in client-side code.  
+`github-db.js` provides a XOR+base64 obfuscation scheme for embedding a bot PAT in client-side code.  
 This deters casual scrapers but is not encryption.  
 
 ```js  
@@ -631,7 +579,7 @@ const encoded = GitHubDB.encodeToken('ghp_myRealToken')
 
 // Paste the encoded string into your source  
 const db = await GitHubDB.public({  
-  publicToken: 'ghdb_enc_...',  
+  publicTokens: ['ghdb_enc_...'],  
 })  
 ```
 
@@ -729,7 +677,7 @@ try {
 
 The GitHub Contents API uses per-file SHA checksums for optimistic concurrency control.  
 If two writes target the same file simultaneously, one receives HTTP 409.  
-`github-db` retries automatically on 409 up to 5 times before propagating the error.  
+`github-db.js` retries automatically on 409 up to 5 times before propagating the error.  
 
 Bulk operations and `list()` fetch up to 10 files concurrently.  
 ID generation uses `<timestamp-base36>-<crypto-random-base36>` to minimize collision probability.  
@@ -755,7 +703,8 @@ If contents haven't changed, GitHub returns HTTP 304 and the cached listing is r
 Individual file reads and writes always hit the API directly.  
 
 The GitHub API allows 5,000 authenticated requests per hour.  
-For read-heavy public apps, CDN mode routes all reads through jsDelivr and effectively removes the read rate limit at the cost of a small propagation delay.  
+For read-heavy public apps, set `useRaw: true` (the default) to route reads through raw.githubusercontent.com,  
+which bypasses API rate limits entirely. Writes still go through the API.  
 
 ---
 
@@ -779,7 +728,7 @@ All collection names, record IDs, and KV keys are validated against `^[a-zA-Z0-9
 Values outside this set throw immediately.  
 
 **Public token registry.**  
-Tokens used in public mode are registered in `_kv/public.json`.  
+Tokens used in public mode are registered in `_kv/_public.json`.  
 Owner mode checks this list on init and refuses to proceed if the token appears in it.  
 This prevents a public token from being used for owner-mode access.  
 
@@ -802,8 +751,8 @@ There is no multi-document transaction support. Operations across multiple files
 `query`, `findOne`, and `count` load the entire collection before filtering in memory.  
 Large collections are slow and expensive to query.  
 
-**CDN propagation delay.**  
-In CDN mode, freshly committed data may not be visible for several minutes.  
+**Raw propagation delay.**  
+When using `useRaw: true`, freshly committed data may not be immediately visible due to GitHub's CDN caching.  
 
 **Session storage.**  
 In Node.js, sessions are in-memory and do not survive process restarts.  
@@ -811,6 +760,7 @@ In the browser, sessions are limited to the tab's `sessionStorage` lifetime.
 
 **No binary data.**  
 All storage is JSON. Binary content must be base64-encoded manually before storing.  
+
 **Repository size.**  
 GitHub has soft limits on repository size.  
 A database with millions of small files would approach those limits over time.
