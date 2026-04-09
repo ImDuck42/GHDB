@@ -5,6 +5,7 @@
 > GitHub is not a database. Every write consumes API rate limit quota and creates a permanent commit.  
 > Data is stored in plain JSON files in a public or private repo — anyone with repo access can read or modify it directly.  
 > There is no real authentication security, no access control enforcement at the GitHub level, and no protection against data loss from force pushes or repo deletion.
+> [Example Website using this DB](https://github.com/ImDuck42/Quotipedia)
 
 ---
 
