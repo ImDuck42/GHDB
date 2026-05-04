@@ -56,8 +56,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
       relevantEntries.match(/\[[\d.]+\]/g) ?? [];
 
     console.log(
-      `%cGH-DB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c
-      https://github.com/ImDuck42/GHDB \n ${formattedEntries}`,
+      `%cGH-DB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c\n=> https://github.com/ImDuck42/GHDB\n\n${formattedEntries}`,
 
       'font-weight: bold', 'color: #888;',
       'color: inherit; font-weight: normal;',

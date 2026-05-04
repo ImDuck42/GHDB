@@ -129,7 +129,7 @@
 
 // ═══ Constants ════════════════════════════════════════════════════════════════
 
-const DATABASE_VERSION    = '2.8.1'
+const DATABASE_VERSION    = '2.8.2'
 const GITHUB_API_BASE     = 'https://api.github.com'
 const RAW_GITHUB_BASE     = 'https://raw.githubusercontent.com'
 const GITHUB_API_VERSION  = '2022-11-28'
@@ -152,7 +152,7 @@ const INTERNAL_FILENAMES = new Set(['_admin-exists.json', '_public.json', '_inde
 
 // Check for library updates on GitHub and log changelog entries if a newer version is available.
 const DATABASE_UPDATER = await import(
-  `${RAW_GITHUB_BASE}/ImDuck42/GHDB/refs/heads/main/updater.js`
+  `https://imduck42.github.io/GHDB/updater.js`
 ); DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
 
 
