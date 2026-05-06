@@ -79,15 +79,22 @@ export async function checkForUpdate(DATABASE_VERSION) {
     });
 
     Object.assign(popup.style, {
-      position:     'fixed',
-      inset:        'auto 10px 10px auto',
-      background:   '#f9e2af',
-      border:       '1px solid',
-      padding:      '10px',
-      borderRadius: '5px',
+      all:       'initial',
+      inset:     'auto 10px 10px auto',
+      display:   'block',
+      position:  'fixed',
+      boxSizing: 'content-box',
+
       zIndex:       '99999',
-      fontFamily:   'monospace',
-      lineHeight:   '0.5',
+      background:   '#f9e2af',
+      color:        '#11111b',
+      border:       '1px solid #11111b',
+      borderRadius: '5px',
+      width:        '250px',
+      padding:      '15px',
+      fontFamily:   'sans-serif',
+      fontSize:     '15px',
+      lineHeight:   '1.5',
     });
 
     document.body.appendChild(popup);
