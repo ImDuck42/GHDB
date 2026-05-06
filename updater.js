@@ -94,7 +94,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
         padding:      '10px',
         fontFamily:   'sans-serif',
         fontSize:     '15px',
-        lineHeight:   '2.0',
+        lineHeight:   '1.8',
     });
 
     const buttons = popup.querySelectorAll('button');
