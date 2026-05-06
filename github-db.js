@@ -57,7 +57,6 @@
  *    await posts.upsert(id, data)                                                     // create-or-patch
  *    await posts.query(record => record.published)                                    // filter in memory
  *    await posts.query(fn, { sort, limit, offset })                                   // with options
- *    await posts.findOne(record => record.slug === 'hello')                           // first match | null
  *    await posts.count()                                                              // total count
  *    await posts.count(record => record.published)                                    // filtered count
  *    await posts.exists(id)                                                           // boolean
@@ -129,7 +128,7 @@
 
 // ═══ Constants ════════════════════════════════════════════════════════════════
 
-const DATABASE_VERSION    = '2.8.2'
+const DATABASE_VERSION    = '2.9.1'
 const GITHUB_API_BASE     = 'https://api.github.com'
 const RAW_GITHUB_BASE     = 'https://raw.githubusercontent.com'
 const GITHUB_API_VERSION  = '2022-11-28'
@@ -153,7 +152,7 @@ const INTERNAL_FILENAMES = new Set(['_admin-exists.json', '_public.json', '_inde
 // Check for library updates on GitHub and log changelog entries if a newer version is available.
 const DATABASE_UPDATER = await import(
   `https://imduck42.github.io/GHDB/updater.js`
-); DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
+); await DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
 
 
 // ═══ Error ════════════════════════════════════════════════════════════════════
@@ -537,20 +536,22 @@ class SessionState {
   /**
    * @param {{ getItem(key: string): string|null, setItem(key: string, value: string): void, removeItem(key: string): void }|null} [storage]
    */
+  usesWebStorage = undefined
+
   constructor(storage = null) {
     this.activeUser = null
     this.store = storage
       ?? (typeof globalThis !== 'undefined' && globalThis.sessionStorage)
       ?? new Map()
+    this.usesWebStorage = typeof this.store.getItem === 'function'
     this.restoreSession()
   }
 
   // ══ Storage Adapters ══════════════════════════════════════════════════════════
 
-  // Prefers the Web Storage API (getItem/setItem/removeItem) with Map fallback.
   storageGet(key) {
     try {
-      return typeof this.store.getItem === 'function'
+      return this.usesWebStorage
         ? this.store.getItem(key)
         : (this.store.get(key) ?? null)
     } catch { return null }
@@ -558,7 +559,7 @@ class SessionState {
 
   storageSet(key, value) {
     try {
-      typeof this.store.setItem === 'function'
+      this.usesWebStorage
         ? this.store.setItem(key, value)
         : this.store.set(key, value)
     } catch {}
@@ -566,7 +567,7 @@ class SessionState {
 
   storageDelete(key) {
     try {
-      typeof this.store.removeItem === 'function'
+      this.usesWebStorage
         ? this.store.removeItem(key)
         : this.store.delete(key)
     } catch {}
@@ -693,10 +694,20 @@ class GitHubFilesystem {
     }
   }
 
+  /**
+   * Build the GitHub Contents API URL for a given file path.
+   * @param   {string} filePath Repo-relative path (e.g. `data/posts/abc.json`).
+   * @returns {string}
+   */
   contentsUrl(filePath) {
     return `${GITHUB_API_BASE}/repos/${this.owner}/${this.repo}/contents/${filePath}`
   }
 
+  /**
+   * Parse a failed GitHub API response and throw a DatabaseError.
+   * @param   {Response} response
+   * @param   {string}   fallbackMessage
+   */
   async throwApiError(response, fallbackMessage) {
     const body = await response.json().catch(() => ({}))
     throw new DatabaseError(body.message || fallbackMessage, response.status)
@@ -772,7 +783,7 @@ class GitHubFilesystem {
   }
 
   /**
-   * Returns the files array from the directory index, or `null` if the index does not exist yet.
+   * Returns the files array from the directory index, or `null` if the index file does not exist yet.
    * @param   {string} dirPath
    * @returns {Promise<string[]|null>}
    */
@@ -844,7 +855,7 @@ class GitHubFilesystem {
     })
 
     if (!response.ok) { await this.throwApiError(response, `Delete failed (${response.status})`) }
-
+    
     if (filePath.split('/').pop() !== '_index.json') {
       await this.upsertIndex(filePath, 'remove').catch(err =>
         console.warn('[GitHubDB] _index.json update failed for', filePath, err)
@@ -896,7 +907,7 @@ class GitHubFilesystem {
     const dirPath   = segments.join('/')
     const indexPath = `${dirPath}/_index.json`
 
-    for (let attempt = 0; attempt <= MAX_WRITE_RETRIES; attempt++) {
+    await retryOnConflict(async () => {
       const existing   = await this.readFile(indexPath)
       const currentSet = new Set(existing ? (existing.content?.files ?? []) : [])
 
@@ -906,19 +917,13 @@ class GitHubFilesystem {
       currentSet.delete('_index.json')
       const files = [...currentSet].sort()
 
-      try {
-        await this.writeFile(
-          indexPath,
-          { files, updatedAt: new Date().toISOString() },
-          `index: update ${dirPath}`,
-          existing?.sha
-        )
-        return
-      } catch (error) {
-        if (error.httpStatus === 409 && attempt < MAX_WRITE_RETRIES) { continue }
-        throw error
-      }
-    }
+      await this.writeFile(
+        indexPath,
+        { files, updatedAt: new Date().toISOString() },
+        `index: update ${dirPath}`,
+        existing?.sha
+      )
+    })
   }
 
   // ══ Audit & Health ════════════════════════════════════════════════════════════
@@ -1175,7 +1180,8 @@ class Collection {
   // ══ Query ═════════════════════════════════════════════════════════════════════
 
   /**
-   * Filter all records using an in-memory predicate function, with optional sort / pagination.
+   * Filter all records using an in-memory predicate function, with optional sort / pagination.  
+   * Exits early once `limit` is satisfied (no sort).
    * @param   {function(object): boolean}                            filterFn
    * @param   {{ sort?: function, limit?: number, offset?: number }} [options]
    * @returns {Promise<object[]>}
@@ -1208,25 +1214,6 @@ class Collection {
     }
 
     return results
-  }
-
-  /**
-   * Return the first record matching the predicate, or `null` if none match.
-   * @param   {function(object): boolean} filterFn
-   * @returns {Promise<object|null>}
-   */
-  async findOne(filterFn) {
-    let batchOffset = 0
-
-    while (true) {
-      const batch = await this.list({ limit: QUERY_BATCH_SIZE, offset: batchOffset })
-      if (batch.length === 0) { return null }
-
-      const match = batch.find(filterFn)
-      if (match) { return match }
-
-      batchOffset += QUERY_BATCH_SIZE
-    }
   }
 
   /**
@@ -1582,12 +1569,13 @@ class AuthManager {
   /**
    * Fetch a single user record.
    *
-   * Pass `raw = true` for read-only operations —  returns only the parsed value.  
-   * Pass `raw = false` (default) when a write will follow — returns `{ user, sha }`.
+   * Pass `raw = true` for read-only operations — returns the parsed user object or `null`.  
+   * Pass `raw = false` (default) when a write will follow — returns `{ user: object, sha: string }` or `null`.
    *
    * @param   {string}  username
    * @param   {boolean} [raw=false]
-   * @returns {Promise<{ user: object, sha: string }|object|null>}
+   * @returns {Promise<{ user: object, sha: string }|null>} raw=false  
+   *          {Promise<object|null>}                        raw=true
    */
   async fetchUser(username, raw = false) {
     const file = await this.filesystem.readFile(this.userFilePath(username), raw)
@@ -1889,6 +1877,44 @@ class GitHubDB {
     this.auth = new AuthManager(filesystem, this.session, basePath, useRaw)
   }
 
+  // ══ ORIGIN CHECKING ═══════════════════════════════════════════════════════════
+
+  /**
+   * Check if the current origin is allowed by comparing to the `_origins` key value.  
+   * Called automatically by `GitHubDB.public()` and `GitHubDB.owner()`.
+   * @throws {DatabaseError} If the current origin is not in `_origins`.
+   */
+  async checkOrigins() {
+    if (typeof window === 'undefined') { return }
+
+    const originsPath = `${this.basePath}/_kv/_origins.json`
+    const originsFile = await this.filesystem.readFile(originsPath, this.useRaw)
+
+    const resource = await fetch(window.location.href, { method: 'HEAD' })
+    const origin   = `${window.location.origin} | ${resource.headers.get('Server') || '?'} | ${resource.headers.get('ETag') || '?'}`
+
+    if (!originsFile) {
+      await this.filesystem.writeFile(
+        originsPath,
+        { key: '_origins', value: [], updatedAt: new Date().toISOString() },
+        'kv: init _origins',
+        file?.sha
+      )
+      throw new DatabaseError(`Origin not allowed. Add this to _origins: "${origin}"`)
+    }
+
+    const patterns = originsFile.content?.value ?? originsFile.value ?? []
+
+    const allowed = patterns.some(pattern => {
+      const regex = new RegExp(
+        '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'
+      )
+      return regex.test(origin)
+    })
+
+    if (!allowed) throw new DatabaseError(`Origin not allowed. Add this to _origins: "${origin}"`)
+  }
+
   // ══ Public-Token Registry ═════════════════════════════════════════════════════
 
   /**
@@ -1948,6 +1974,7 @@ class GitHubDB {
       { basePath, useRaw, enrollToken: false, storage }
     )
     for (const token of tokens) await db.assertNotPublicToken(token)
+    await db.checkOrigins()
     return db
   }
 
@@ -1965,6 +1992,7 @@ class GitHubDB {
     await Promise.all(publicTokens.map(token => db.enrollPublicToken(token).catch(error => {
       console.warn('[GitHubDB] Could not enroll public token:', error)
     })))
+    await db.checkOrigins()
     return db
   }
 

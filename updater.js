@@ -24,7 +24,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
     )?.[1];
 
     if (!latestVersion || !isOutdated(latestVersion, DATABASE_VERSION))
-      return console.log(`GH-DB up to date (${DATABASE_VERSION})`);
+      return console.log(`GHDB up to date (${DATABASE_VERSION})`);
 
     const changelogText = await fetch(
       new URL('./CHANGELOG.md', import.meta.url)
@@ -45,7 +45,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
       .join('\n\n');
 
     if (!relevantEntries)
-      return console.log(`GH-DB up to date (${DATABASE_VERSION})`);
+      return console.log(`GHDB up to date (${DATABASE_VERSION})`);
 
     const formattedEntries = relevantEntries.replace(
       /(\[[\d.]+\])/g,
@@ -56,7 +56,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
       relevantEntries.match(/\[[\d.]+\]/g) ?? [];
 
     console.log(
-      `%cGH-DB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c\n=> https://github.com/ImDuck42/GHDB\n\n${formattedEntries}`,
+      `%cGHDB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c\n=> https://github.com/ImDuck42/GHDB\n\n${formattedEntries}`,
 
       'font-weight: bold', 'color: #888;',
       'color: inherit; font-weight: normal;',
@@ -71,7 +71,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
 
     const popup = Object.assign(document.createElement('div'), {
       innerHTML: `
-        <strong>GH-DB Update available: v${latestVersion}</strong>
+        <strong>GHDB Update available: v${latestVersion}</strong>
         <p>Check the console for changes.</p>
         <button id="update-popup-close">Close</button>
         <button id="update-popup-suppress">Don't show again</button>

@@ -34,7 +34,7 @@
   * [ X ] Check against all tokens in `public` list, in decoded mode and not decoded
   * [ X ] If match -> reject login
 
-* [ ? ] Add per db auth so no one can just dock to any db from any file
+* [ X ] Add per db auth so no one can just dock to any db from any file
 
 ### Maybe
 

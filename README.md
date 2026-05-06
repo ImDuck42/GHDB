@@ -33,7 +33,6 @@ All data is stored as individual JSON files. Every record's full history is pres
   - [remove](#remove)  
   - [upsert](#upsert)  
   - [query](#query)  
-  - [findOne](#findone)  
   - [count](#count)  
   - [exists](#exists)  
   - [bulkAdd](#bulkadd)  
@@ -154,7 +153,7 @@ const db = await GitHubDB.public({
   rawBranches:  ['main', 'master'],            // optional, branches for raw reads
   basePath:     'data',                        // optional, default: 'data'
   useRaw:       true,                          // optional, default: true
-  enrollToken:  true,                          // optional, default: true — set false to skip token registration
+  enrollToken:  true,                          // optional, default: true — set false to skip token registration. Only meaningful in public mode.
   storage:      null,                          // optional, custom session storage for SSR
 })
 ```
@@ -269,6 +268,7 @@ const record = await posts.upsert('my-custom-id', { title: 'Either way', publish
 ### query  
 
 Filter all records in memory with a predicate. Supports optional sorting, limiting, and offsetting.  
+Without a `sort`, exits early once `limit` is satisfied — only the records needed are fetched.  
 
 ```js
 const published = await posts.query(r => r.published)
@@ -284,14 +284,6 @@ const paginated = await posts.query(
 ```
 
 `query` fetches records in batches of 50 internally. For large collections, prefer direct `get` calls where the ID is known.  
-
-### findOne  
-
-Return the first record matching a predicate, or `null`.  
-
-```js
-const post = await posts.findOne(r => r.slug === 'hello-world')
-```
 
 ### count  
 
@@ -789,7 +781,7 @@ This library suits apps where writes happen at human-interaction pace.
 There is no multi-document transaction support. Operations across multiple files are not atomic.  
 
 **No server-side queries.**  
-`query`, `findOne`, and `count` load the entire collection before filtering in memory.  
+`query` and `count` load the entire collection before filtering in memory.  
 Large collections are slow and expensive to query.  
 
 **Raw propagation delay.**  
