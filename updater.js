@@ -56,7 +56,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
       relevantEntries.match(/\[[\d.]+\]/g) ?? [];
 
     console.log(
-      `%cGHDB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c\n=> https://github.com/ImDuck42/GHDB\n\n${formattedEntries}`,
+      `%cGHDB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c\n=> https://github.com/ImDuck42/GHDB\n\n${formattedEntries}\n`,
 
       'font-weight: bold', 'color: #888;',
       'color: inherit; font-weight: normal;',
@@ -79,22 +79,36 @@ export async function checkForUpdate(DATABASE_VERSION) {
     });
 
     Object.assign(popup.style, {
-      all:       'initial',
-      inset:     'auto 10px 10px auto',
-      display:   'block',
-      position:  'fixed',
-      boxSizing: 'content-box',
+        all:       'initial',
+        inset:     'auto 10px 10px auto',
+        display:   'block',
+        position:  'fixed',
+        boxSizing: 'content-box',
 
-      zIndex:       '99999',
-      background:   '#f9e2af',
-      color:        '#11111b',
-      border:       '1px solid #11111b',
-      borderRadius: '5px',
-      width:        '250px',
-      padding:      '15px',
-      fontFamily:   'sans-serif',
-      fontSize:     '15px',
-      lineHeight:   '1.5',
+        zIndex:       '99999',
+        background:   '#f9e2af',
+        color:        '#11111b',
+        border:       '1px solid #11111b',
+        borderRadius: '5px',
+        maxWidth:     '250px',
+        padding:      '10px',
+        fontFamily:   'sans-serif',
+        fontSize:     '15px',
+        lineHeight:   '0.5',
+    });
+
+    const buttons = popup.querySelectorAll('button');
+    buttons.forEach(btn => {
+        Object.assign(btn.style, {
+            all:          'initial',
+            display:      'inline-block',
+            cursor:       'pointer',
+            padding:      '5px 10px',
+            marginRight:  '5px',
+            border:       '1px solid #11111b',
+            borderRadius: '5px',
+            background:   '#f5d180',
+        });
     });
 
     document.body.appendChild(popup);
