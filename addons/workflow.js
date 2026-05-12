@@ -102,19 +102,35 @@ jobs:
   };
 
   let sha;
+  let existingContent;
+  let fileUrl;
+
   const existing = await fetch(apiUrl, { headers });
   
   if (existing.ok) {
-    sha = (await existing.json()).sha;
+    const data = await existing.json();
+    sha = data.sha;
+    fileUrl = data.html_url;
+    
+    const rawBase64 = data.content.replace(/\s/g, '');
+    existingContent = decodeURIComponent(escape(atob(rawBase64)));
   } else if (existing.status !== 404) {
     throw new Error(`GitHub API error ${existing.status}: ${await existing.text()}`);
+  }
+
+  if (sha && existingContent === yaml) {
+    return {
+      created: false,
+      url: fileUrl,
+      skipped: true
+    };
   }
 
   const res = await fetch(apiUrl, {
     method:  'PUT',
     headers,
     body:    JSON.stringify({
-      message: 'workflow: add indexer workflow',
+      message: 'workflow: update indexer workflow',
       content: btoa(unescape(encodeURIComponent(yaml))),
       ...(sha ? { sha } : {}),
     }),
