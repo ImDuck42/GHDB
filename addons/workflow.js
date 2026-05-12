@@ -7,6 +7,7 @@ export async function generateIndexerWorkflow(owner, repo, token, basePath) {
 on:
   push:
     paths:
+      - '${path}'
       - '${base}/**.json'
 
 concurrency:

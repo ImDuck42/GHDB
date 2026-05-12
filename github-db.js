@@ -2022,7 +2022,7 @@ class GitHubDB {
       console.warn('[GitHubDB] Could not enroll public token:', error)
     })))
     await db.checkOrigins()
-    await installWorkflow(owner, repo, tokens, basePath)
+    await installWorkflow(owner, repo, publicTokens, basePath)
     return db
   }
 
