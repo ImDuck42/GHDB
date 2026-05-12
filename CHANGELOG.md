@@ -13,18 +13,25 @@
 
 #  Adds per db auth.
 - After the first db connection an *EMPTY* _origins kv is created. Before you can connect to the db, you need to manually add your origin to it!!!
-- Example of the _origins kv value:
+- Example of the _origins kv value (use * to accept anything):
 	```json
 		{
 			"key": "_origins",
 			"value": [
 				"? | ? | ?",
-				" lorem | ipsum | dolor"
+				"http://localhost:3000 | SimpleHTTP/0.6 Python/3.*.* | W/\"35a-618d3b8c\""
 			],
 			"updatedAt": "Timestamp"
 		}
 	```
  - The error message on a non configured _origins kv will show the files current origin for convenient copy-pasting into it.
+- EDIT: Edited the 2nd example origin in [3.0.0]
 
 # Small changes for consistency.
 - Small internal refactors and fixed some inconsistencies.
+
+[3.0.0]
+# README.md changes and disabling of db _index.json updates.
+- Refactored the readme and added some clarifications and missing features
+- Now the db will seed a workflow which will rebuild all _index.json files when a .json file is edited.
+  - Therefore disabled (commented out) the manual _index.json editing functions

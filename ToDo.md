@@ -15,12 +15,14 @@
 * [ X ] Store each user in a separate JSON in _auth
     * [ X ] Use user ID as file name for those
 * [ X ] Seperate api from raw branch, use master as default raw
+* [ _ ] Add folder nesting when approaching the 1k files per directory limit eg. /data/stuff/stuff{1}/stuff{2}/...
 
 ### Code Cleanup
 
 * [ X ] Remove `decodeToken` function
 * [ X ] Use `encode` for decoding (XOR symmetry)
 * [ X ] Remove comment about reversal logic since it makes attacks easier
+* [ _ ] No manual internal files list: anything stating with _ is internal and cannot be used for any file-name start
 
 ### Security
 

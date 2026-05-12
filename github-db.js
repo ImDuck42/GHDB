@@ -128,7 +128,7 @@
 
 // ═══ Constants ════════════════════════════════════════════════════════════════
 
-const DATABASE_VERSION    = '2.9.1'
+const DATABASE_VERSION    = '3.0.0'
 const GITHUB_API_BASE     = 'https://api.github.com'
 const RAW_GITHUB_BASE     = 'https://raw.githubusercontent.com'
 const GITHUB_API_VERSION  = '2022-11-28'
@@ -147,12 +147,37 @@ const ENCODE_PREFIX     = 'ghdb_enc_'
 const TOKEN_XOR_KEY     = 'GHDB'
 
 // Internal filenames written by the auth system.
-const INTERNAL_FILENAMES = new Set(['_admin-exists.json', '_public.json', '_index.json'])
+const INTERNAL_FILENAMES = new Set(['_admin-exists.json', '_index.json', '_public.json', '_origins.json'])
+
+
+// ═══ ADDON MANAGEMENT ═════════════════════════════════════════════════════════
+
+const ADDON_BASE = 'https://imduck42.github.io/GHDB/addons'
 
 // Check for library updates on GitHub and log changelog entries if a newer version is available.
 const DATABASE_UPDATER = await import(
-  `https://imduck42.github.io/GHDB/updater.js`
+  `${ADDON_BASE}/updater.js`
 ); await DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
+
+// Import the workflow indexer addon
+const INDEX_WORKFLOW = await import(
+  `${ADDON_BASE}/workflow.js` // herefore disable manual _inddex.js updates via js
+);
+
+/**
+ * Uses the imported  workflow module to create a wrapper function.
+ * @param {string}   owner
+ * @param {string}   repo
+ * @param {string[]} tokens
+ * @param {string}   basePath
+ */
+async function installWorkflow(owner, repo, tokens, basePath) {
+  try {
+    await INDEX_WORKFLOW.generateIndexerWorkflow(owner, repo, tokens[0], basePath)
+  } catch (error) {
+    throw new DatabaseError(`Could not install indexer workflow: ${error.message}`)
+  }
+}
 
 
 // ═══ Error ════════════════════════════════════════════════════════════════════
@@ -625,7 +650,7 @@ class GitHubFilesystem {
    * @param {object}   config
    * @param {string}   config.owner
    * @param {string}   config.repo
-   * @param {string[]} config.tokens                 Array of GitHub PATs with content read/write and metadata/commits read scopes.
+   * @param {string[]} config.tokens                 Array of GitHub PATs with content/workflows read/write and metadata/commits read scopes.
    * @param {string}   [config.branch='main']        Branch used for GitHub API reads/writes.
    * @param {string[]} [config.rawBranches=['main']] Array of branches used for raw reads where the branch whose file has the most recent Last-Modified timestamp is used.
    */
@@ -829,11 +854,12 @@ class GitHubFilesystem {
     if (!response.ok) await this.throwApiError(response, `Write failed (${response.status})`)
     const result = await response.json()
 
-    if (filePath.split('/').pop() !== '_index.json') {
-      await this.upsertIndex(filePath, 'add').catch(error =>
-        console.warn('[GitHubDB] _index.json update failed for', filePath, error)
-      )
-    }
+    // DISABLED
+    //if (filePath.split('/').pop() !== '_index.json') {
+    //  await this.upsertIndex(filePath, 'add').catch(error =>
+    //    console.warn('[GitHubDB] _index.json update failed for', filePath, error)
+    //  )
+    //}
 
     return result
   }
@@ -856,11 +882,12 @@ class GitHubFilesystem {
 
     if (!response.ok) { await this.throwApiError(response, `Delete failed (${response.status})`) }
     
-    if (filePath.split('/').pop() !== '_index.json') {
-      await this.upsertIndex(filePath, 'remove').catch(err =>
-        console.warn('[GitHubDB] _index.json update failed for', filePath, err)
-      )
-    }
+    // DISABLED
+    //if (filePath.split('/').pop() !== '_index.json') {
+    //  await this.upsertIndex(filePath, 'remove').catch(err =>
+    //    console.warn('[GitHubDB] _index.json update failed for', filePath, err)
+    //  )
+    //}
 
     return true
   }
@@ -893,6 +920,7 @@ class GitHubFilesystem {
     return data
   }
 
+  // DISABLED
   // ══ Index Maintenance ═════════════════════════════════════════════════════════
 
   /**
@@ -901,30 +929,30 @@ class GitHubFilesystem {
    * @param   {'add'|'remove'} action
    * @returns {Promise<void>}
    */
-  async upsertIndex(filePath, action) {
-    const segments  = filePath.split('/')
-    const fileName  = segments.pop()
-    const dirPath   = segments.join('/')
-    const indexPath = `${dirPath}/_index.json`
+  //async upsertIndex(filePath, action) {
+  //  const segments  = filePath.split('/')
+  //  const fileName  = segments.pop()
+  //  const dirPath   = segments.join('/')
+  //  const indexPath = `${dirPath}/_index.json`
 
-    await retryOnConflict(async () => {
-      const existing   = await this.readFile(indexPath)
-      const currentSet = new Set(existing ? (existing.content?.files ?? []) : [])
+  //  await retryOnConflict(async () => {
+  //    const existing   = await this.readFile(indexPath)
+  //    const currentSet = new Set(existing ? (existing.content?.files ?? []) : [])
 
-      if (action === 'add') { currentSet.add(fileName) }
-      else                  { currentSet.delete(fileName) }
+  //    if (action === 'add') { currentSet.add(fileName) }
+  //    else                  { currentSet.delete(fileName) }
 
-      currentSet.delete('_index.json')
-      const files = [...currentSet].sort()
+  //    currentSet.delete('_index.json')
+  //    const files = [...currentSet].sort()
 
-      await this.writeFile(
-        indexPath,
-        { files, updatedAt: new Date().toISOString() },
-        `index: update ${dirPath}`,
-        existing?.sha
-      )
-    })
-  }
+  //    await this.writeFile(
+  //      indexPath,
+  //      { files, updatedAt: new Date().toISOString() },
+  //      `index: update ${dirPath}`,
+  //      existing?.sha
+  //    )
+  //  })
+  //}
 
   // ══ Audit & Health ════════════════════════════════════════════════════════════
 
@@ -1975,6 +2003,7 @@ class GitHubDB {
     )
     for (const token of tokens) await db.assertNotPublicToken(token)
     await db.checkOrigins()
+    await installWorkflow(owner, repo, tokens, basePath)
     return db
   }
 
@@ -1993,6 +2022,7 @@ class GitHubDB {
       console.warn('[GitHubDB] Could not enroll public token:', error)
     })))
     await db.checkOrigins()
+    await installWorkflow(owner, repo, tokens, basePath)
     return db
   }
 

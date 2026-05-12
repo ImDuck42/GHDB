@@ -16,7 +16,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
 
   try {
     const scriptText = await fetch(
-      new URL('./github-db.js', import.meta.url)
+      new URL('./../github-db.js', import.meta.url)
     ).then(r => r.text());
 
     const latestVersion = scriptText.match(
@@ -27,7 +27,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
       return console.log(`GHDB up to date (${DATABASE_VERSION})`);
 
     const changelogText = await fetch(
-      new URL('./CHANGELOG.md', import.meta.url)
+      new URL('./../CHANGELOG.md', import.meta.url)
     ).then(r => r.text());
 
     const relevantEntries = changelogText
