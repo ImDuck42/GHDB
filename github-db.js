@@ -1916,12 +1916,12 @@ class GitHubDB {
     if (typeof window === 'undefined') { return }
 
     const originsPath = `${this.basePath}/_kv/_origins.json`
-    const originsFile = await this.filesystem.readFile(originsPath, this.useRaw)
+    const file        = await this.filesystem.readFile(originsPath, this.useRaw)
 
     const resource = await fetch(window.location.href, { method: 'HEAD' })
     const origin   = `${window.location.origin} | ${resource.headers.get('Server') || '?'} | ${resource.headers.get('ETag') || '?'}`
 
-    if (!originsFile) {
+    if (!file) {
       await this.filesystem.writeFile(
         originsPath,
         { key: '_origins', value: [], updatedAt: new Date().toISOString() },
@@ -1931,7 +1931,7 @@ class GitHubDB {
       throw new DatabaseError(`Origin not allowed. Add this to _origins: "${origin}"`)
     }
 
-    const patterns = originsFile.content?.value ?? originsFile.value ?? []
+    const patterns = file.content?.value ?? file.value ?? []
 
     const allowed = patterns.some(pattern => {
       const regex = new RegExp(
