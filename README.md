@@ -758,7 +758,7 @@ You do not need to manage `_index.json` manually.
 When initializing a database, `github-db.js` automatically installs a GitHub Actions workflow at `.github/workflows/indexer.yml` in your database repository.  
 This workflow keeps all `_index.json` files in sync by rebuilding them whenever a `.json` file is pushed — covering any writes made directly to the repository.
 
-The workflow requires that your owner PAT has the **workflows** scope.
+The workflow requires that your PAT has the **workflows** scope for only the first token in the array if multiple are provided.
 
 An example of the installed workflow is provided at [`github/workflows/indexer.yml`](github/workflows/indexer.yml) for reference.  
 It runs on any push that touches a `.json` file under your configured `basePath`, rebuilds the `_index.json` for every affected directory, and commits the result.

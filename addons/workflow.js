@@ -7,8 +7,8 @@ export async function generateIndexerWorkflow(owner, repo, token, basePath) {
 on:
   push:
     paths:
-      - '${path}'
       - '${base}/**.json'
+      - '${path}'
 
 concurrency:
   group: merge-index-\${{ github.ref }}
@@ -21,7 +21,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -98,33 +98,23 @@ jobs:
     'Authorization':        `Bearer ${token}`,
     'Accept':               'application/vnd.github+json',
     'Content-Type':         'application/json',
-    'X-GitHub-Api-Version': '2022-11-28',
+    'X-GitHub-Api-Version': '2026-03-10',
   };
 
-  let sha;
-  let existingContent;
-  let fileUrl;
+let sha;
+const existing = await fetch(apiUrl, { headers });
 
-  const existing = await fetch(apiUrl, { headers });
-  
-  if (existing.ok) {
-    const data = await existing.json();
-    sha = data.sha;
-    fileUrl = data.html_url;
-    
-    const rawBase64 = data.content.replace(/\s/g, '');
-    existingContent = decodeURIComponent(escape(atob(rawBase64)));
-  } else if (existing.status !== 404) {
-    throw new Error(`GitHub API error ${existing.status}: ${await existing.text()}`);
-  }
+if (existing.ok) {
+  const existingData = await existing.json();
+  sha = existingData.sha;
 
-  if (sha && existingContent === yaml) {
-    return {
-      created: false,
-      url: fileUrl,
-      skipped: true
-    };
+  const newContent = btoa(unescape(encodeURIComponent(yaml)));
+  const oldContent = existingData.content.replace(/\n/g, '');
+
+  if (oldContent === newContent) {
+    return { created: false, url: existingData.html_url };
   }
+}
 
   const res = await fetch(apiUrl, {
     method:  'PUT',

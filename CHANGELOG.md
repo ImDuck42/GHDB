@@ -35,3 +35,12 @@
 - Refactored the readme and added some clarifications and missing features
 - Now the db will seed a workflow which will rebuild all _index.json files when a .json file is edited.
   - Therefore disabled (commented out) the manual _index.json editing functions
+
+[3.0.1]
+# Worflow fix and GH api version update:
+- If you are using GHDB version [3.0.0] PLEASE UPDATE:
+  - Every refresh of the page will re-add the indexer workflow, which is fixed in this version
+- changed the `X-GitHub-Api-Version` from `2022-11-28` to `2026-03-10`
+  - This was a huge overhaul of line 134-ghdb & 101-wokflow respectively (I changed the numbers)
+- Changed line 761 of the README.md towards clarifications:
+  - Only the first listed token NEEDS workflows scope

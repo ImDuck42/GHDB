@@ -128,10 +128,10 @@
 
 // ═══ Constants ════════════════════════════════════════════════════════════════
 
-const DATABASE_VERSION    = '3.0.0'
+const DATABASE_VERSION    = '3.0.1'
 const GITHUB_API_BASE     = 'https://api.github.com'
 const RAW_GITHUB_BASE     = 'https://raw.githubusercontent.com'
-const GITHUB_API_VERSION  = '2022-11-28'
+const GITHUB_API_VERSION  = '2026-03-10'
 
 const SESSION_STORAGE_KEY = '__githubdb_session__'
 const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000 // 8 hours
@@ -155,17 +155,18 @@ const INTERNAL_FILENAMES = new Set(['_admin-exists.json', '_index.json', '_publi
 const ADDON_BASE = 'https://imduck42.github.io/GHDB/addons'
 
 // Check for library updates on GitHub and log changelog entries if a newer version is available.
-const DATABASE_UPDATER = await import(
-  `${ADDON_BASE}/updater.js`
-); await DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
+try {
+  const DATABASE_UPDATER = await import(`${ADDON_BASE}/updater.js`)
+  await DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
+} catch { }
 
 // Import the workflow indexer addon
 const INDEX_WORKFLOW = await import(
   `${ADDON_BASE}/workflow.js` // herefore disable manual _inddex.js updates via js
-);
+)
 
 /**
- * Uses the imported  workflow module to create a wrapper function.
+ * Uses the imported  workflow module to create a wrapper function using the first token.
  * @param {string}   owner
  * @param {string}   repo
  * @param {string[]} tokens

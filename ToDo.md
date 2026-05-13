@@ -8,6 +8,7 @@
 
 * [ X ] Move more function calls on static files to the cdn e.g. getting all users/kvs/collections etc
 * [ X ] Add update checker and changelog
+* [ X ] Actually fix the workflow indexing on every client page reload
 
 ### Data Model
 
