@@ -48,23 +48,23 @@
  *
  *    const posts = db.collection('posts')
  *
- *    await posts.add({ title: 'Hello' })                                              // create
- *    await posts.get(id)                                                              // fetch one -> record | null
- *    await posts.list()                                                               // fetch all
- *    await posts.update(id, { title: 'New' })                                         // partial patch
- *    await posts.replace(id, { title: 'New' })                                        // full replace
- *    await posts.remove(id)                                                           // delete
- *    await posts.upsert(id, data)                                                     // create-or-patch
- *    await posts.query(record => record.published)                                    // filter in memory
- *    await posts.query(fn, { sort, limit, offset })                                   // with options
- *    await posts.count()                                                              // total count
- *    await posts.count(record => record.published)                                    // filtered count
- *    await posts.exists(id)                                                           // boolean
- *    await posts.bulkAdd([{ ... }, { ... }])                                          // add many
- *    await posts.bulkRemove([id1, id2])                                               // remove many
- *    await posts.clear()                                                              // delete all (irreversible)
- *    const stop = posts.subscribe(({ records, added, changed, removed }) => {}, 5000) // poll for changes
- *    stop()                                                                           // cancel subscription
+ *    await posts.add({ title: 'Hello' })                                               // create
+ *    await posts.get(id)                                                               // fetch one -> record | null
+ *    await posts.list()                                                                // fetch all
+ *    await posts.update(id, { title: 'New' })                                          // partial patch
+ *    await posts.replace(id, { title: 'New' })                                         // full replace
+ *    await posts.remove(id)                                                            // delete
+ *    await posts.upsert(id, data)                                                      // create-or-patch
+ *    await posts.query(record => record.published)                                     // filter in memory
+ *    await posts.query(fn, { sort, limit, offset })                                    // with options
+ *    await posts.count()                                                               // total count
+ *    await posts.count(record => record.published)                                     // filtered count
+ *    await posts.exists(id)                                                            // boolean
+ *    await posts.bulkAdd([{ ... }, { ... }])                                           // add many
+ *    await posts.bulkRemove([id1, id2])                                                // remove many
+ *    await posts.clear()                                                               // delete all (irreversible)
+ *    const stop = posts.subscribe(({ records, added, changed, removed }) => { }, 5000) // poll for changes
+ *    stop()                                                                            // cancel subscription
  *
  * ═══ SUBCOLLECTIONS  (nested collections inside a collection) ═══════════════════════════════════════════════════════════════════════════
  *
@@ -76,17 +76,17 @@
  * ═══ KEY-VALUE STORE  (stored at <basePath>/_kv/<key>.json) ═════════════════════════════════════════════════════════════════════════════
  *
  *    await db.kv.set('theme', 'dark')
- *    await db.kv.get('theme')                                                         // value | null
+ *    await db.kv.get('theme')                                                          // value | null
  *    await db.kv.delete('theme')
- *    await db.kv.has('theme')                                                         // boolean
- *    await db.kv.increment('views')                                                   // atomic-ish counter
- *    await db.kv.increment('score', 5)                                                // increment by N
- *    await db.kv.getMany('key1', 'key2')                                              // { key1: v1, key2: v2 }
- *    await db.kv.getMany(['key1', 'key2'])                                            // array form also accepted
+ *    await db.kv.has('theme')                                                          // boolean
+ *    await db.kv.increment('views')                                                    // atomic-ish counter
+ *    await db.kv.increment('score', 5)                                                 // increment by N
+ *    await db.kv.getMany('key1', 'key2')                                               // { key1: v1, key2: v2 }
+ *    await db.kv.getMany(['key1', 'key2'])                                             // array form also accepted
  *    await db.kv.setMany({ key1: v1, key2: v2 })
- *    await db.kv.getAll()                                                             // { key: value } for all KV entries
- *    const stop = db.kv.subscribe(({ records, added, changed, removed }) => {}, 5000) // poll for changes
- *    stop()                                                                           // cancel subscription
+ *    await db.kv.getAll()                                                              // { key: value } for all KV entries
+ *    const stop = db.kv.subscribe(({ records, added, changed, removed }) => { }, 5000) // poll for changes
+ *    stop()                                                                            // cancel subscription
  *
  * ═══ AUTH  (stored at <basePath>/_auth/<username>.json per user) ════════════════════════════════════════════════════════════════════════
  *
@@ -588,7 +588,7 @@ class SessionState {
       this.usesWebStorage
         ? this.store.setItem(key, value)
         : this.store.set(key, value)
-    } catch {}
+    } catch { }
   }
 
   storageDelete(key) {
@@ -596,7 +596,7 @@ class SessionState {
       this.usesWebStorage
         ? this.store.removeItem(key)
         : this.store.delete(key)
-    } catch {}
+    } catch { }
   }
 
   // ══ Session Lifecycle ═════════════════════════════════════════════════════════
@@ -699,7 +699,7 @@ class GitHubFilesystem {
    * @param   {RequestInit} [init]
    * @returns {Promise<Response>}
    */
-  async fetchWithTokenFallback(url, init = {}) {
+  async fetchWithTokenFallback(url, init = { }) {
     const tried = new Set()
     while (true) {
       const token = this.pickToken(tried)
@@ -735,7 +735,7 @@ class GitHubFilesystem {
    * @param   {string}   fallbackMessage
    */
   async throwApiError(response, fallbackMessage) {
-    const body = await response.json().catch(() => ({}))
+    const body = await response.json().catch(() => ({ }))
     throw new DatabaseError(body.message || fallbackMessage, response.status)
   }
 
@@ -905,7 +905,7 @@ class GitHubFilesystem {
     const cached = this.etagCache.get(dirPath)
 
     const response = await this.fetchWithTokenFallback(url, {
-      headers: cached?.etag ? { 'If-None-Match': cached.etag } : {},
+      headers: cached?.etag ? { 'If-None-Match': cached.etag } : { },
     })
 
     if (response.status === 304) { return cached.data }
@@ -1116,7 +1116,7 @@ class Collection {
    * @param   {{ limit?: number, offset?: number }} [options]
    * @returns {Promise<object[]>}
    */
-  async list({ limit, offset = 0 } = {}) {
+  async list({ limit, offset = 0 } = { }) {
     this.checkPermission('read')
     let entries = (await this.listEntries(this.collectionPath))
       .filter(entry => entry.type === 'file' && !INTERNAL_FILENAMES.has(entry.name))
@@ -1215,7 +1215,7 @@ class Collection {
    * @param   {{ sort?: function, limit?: number, offset?: number }} [options]
    * @returns {Promise<object[]>}
    */
-  async query(filterFn, { sort, limit, offset = 0 } = {}) {
+  async query(filterFn, { sort, limit, offset = 0 } = { }) {
     if (sort) {
       let results = (await this.list()).filter(filterFn).sort(sort)
       if (offset > 0)                           { results = results.slice(offset) }
@@ -1892,7 +1892,7 @@ class GitHubDB {
    * @param {boolean}          [options.enrollToken=true] Set `false` to skip public-token registration.
    * @param {SessionState}     [options.storage=null]     Custom session storage (for SSR compatibility).
    */
-  constructor(filesystem, { basePath = 'data', useRaw = true, enrollToken = true, storage = null } = {}) {
+  constructor(filesystem, { basePath = 'data', useRaw = true, enrollToken = true, storage = null } = { }) {
     this.filesystem     = filesystem
     this.basePath       = basePath
     this.useRaw         = useRaw
