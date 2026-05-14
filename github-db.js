@@ -176,7 +176,7 @@ async function installWorkflow(owner, repo, tokens, basePath) {
   try {
     await INDEX_WORKFLOW.generateIndexerWorkflow(owner, repo, tokens[0], basePath)
   } catch (error) {
-    throw new DatabaseError(`Could not install indexer workflow: ${error.message}`)
+    throw new DatabaseError(`Could not update indexer workflow: ${error.message}`)
   }
 }
 
