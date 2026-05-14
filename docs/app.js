@@ -330,6 +330,11 @@ async function loadMarkdownFile(fileName) {
     return;
   }
 
+  markdownText = markdownText.replace(
+    /\.\/github\//g,
+    './../github/'
+  );
+
   dom.contentArea.innerHTML = `<div class="md-body">${marked.parse(markdownText)}</div>`;
   scanRenderedContent();
   renderTableOfContents();

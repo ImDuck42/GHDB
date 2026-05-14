@@ -634,6 +634,14 @@ body {
     border: 1px solid rgba(245, 194, 231, 0.1);
   }
 
+  & a code {
+    color: var(--ctp-blue);
+  }
+
+  & a:hover code {
+    border-bottom: 1px solid var(--ctp-blue);
+  }
+
   /* Code blocks */
   & pre {
     position: relative;
