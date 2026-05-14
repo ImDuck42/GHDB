@@ -3,9 +3,9 @@
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const MARKDOWN_FILES = {
-  'README.md':    '/README.md',
-  'CHANGELOG.md': '/CHANGELOG.md',
-  'ToDo.md':      '/ToDo.md',
+  'README.md':    '../README.md',
+  'CHANGELOG.md': '../CHANGELOG.md',
+  'ToDo.md':      '../ToDo.md',
 };
 
 const LANGUAGE_ALIASES = {
