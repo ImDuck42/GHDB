@@ -3,9 +3,9 @@
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const MARKDOWN_FILES = {
-  'README.md':    '../README.md',
-  'CHANGELOG.md': '../CHANGELOG.md',
-  'ToDo.md':      '../ToDo.md',
+  'README.md':    'https://raw.githubusercontent.com/ImDuck42/GHDB/refs/heads/main/README.md',
+  'CHANGELOG.md': 'https://raw.githubusercontent.com/ImDuck42/GHDB/refs/heads/main/CHANGELOG.md',
+  'ToDo.md':      'https://raw.githubusercontent.com/ImDuck42/GHDB/refs/heads/main/ToDo.md',
 };
 
 const LANGUAGE_ALIASES = {
