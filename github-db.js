@@ -128,7 +128,7 @@
 
 // ═══ Constants ════════════════════════════════════════════════════════════════
 
-const DATABASE_VERSION    = '3.0.1'
+const DATABASE_VERSION    = '3.0.2'
 const GITHUB_API_BASE     = 'https://api.github.com'
 const RAW_GITHUB_BASE     = 'https://raw.githubusercontent.com'
 const GITHUB_API_VERSION  = '2026-03-10'
@@ -174,7 +174,8 @@ const INDEX_WORKFLOW = await import(
  */
 async function installWorkflow(owner, repo, tokens, basePath) {
   try {
-    await INDEX_WORKFLOW.generateIndexerWorkflow(owner, repo, tokens[0], basePath)
+    const token = resolveToken(tokens[0])
+    await INDEX_WORKFLOW.generateIndexerWorkflow(owner, repo, token, basePath)
   } catch (error) {
     throw new DatabaseError(`Could not update indexer workflow: ${error.message}`)
   }
@@ -781,11 +782,11 @@ class GitHubFilesystem {
   }
 
   /**
-   * Read a JSON file. Dispatches to raw.githubusercontent.com or the GitHub API.  
+   * Read a JSON file. Dispatches to raw.githubusercontent.com or the GitHub API (ETag cached).  
    * When using raw mode, the branch with the most recently updated file is selected from `rawBranches`.
    * @param   {string}  filePath
    * @param   {boolean} [raw=false]
-   * @returns {Promise<object|null>} raw = true -> parsed value | null || raw = false -> { content, sha } | null
+   * @returns {Promise<any|{content: string,sha: string}|null>} raw -> parsed JSON | api -> { content, sha } | null
    */
   async readFile(filePath, raw = false) {
     if (raw) {
@@ -798,14 +799,21 @@ class GitHubFilesystem {
       }
       return this.fetchFreshestRaw(filePath)
     }
-    const response = await this.fetchWithTokenFallback(`${this.contentsUrl(filePath)}?ref=${this.branch}`)
+    const cached = this.etagCache.get(filePath)
+    const response = await this.fetchWithTokenFallback(`${this.contentsUrl(filePath)}?ref=${this.branch}`, {
+      headers: cached?.etag ? { 'If-None-Match': cached.etag } : {},
+    })
+    if (response.status === 304) { return cached.data }
     if (response.status === 404)      { return null }
     if (this.isRateLimited(response)) { this.throwRateLimitError(response) }
     if (!response.ok)                 { await this.throwApiError(response, `Read failed (${response.status})`) }
 
     const data = await response.json()
-    if (Array.isArray(data)) { return null } // path is a directory
-    return { content: decodeFileContent(data.content), sha: data.sha }
+    if (Array.isArray(data)) { return null }
+    const result = { content: decodeFileContent(data.content), sha: data.sha }
+    const etag = response.headers.get('etag')
+    if (etag) this.etagCache.set(filePath, { etag, data: result })
+    return result
   }
 
   /**

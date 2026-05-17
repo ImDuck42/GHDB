@@ -17,6 +17,7 @@
     * [ X ] Use user ID as file name for those
 * [ X ] Seperate api from raw branch, use master as default raw
 * [ _ ] Add folder nesting when approaching the 1k files per directory limit eg. /data/stuff/stuff{1}/stuff{2}/...
+* [ _ ] Add a function to allow file uploads uploadFile(sumparam)
 
 ### Code Cleanup
 

@@ -44,3 +44,8 @@
   - This was a huge overhaul of line 134-ghdb & 101-wokflow respectively (I changed the numbers)
 - Changed line 761 of the README.md towards clarifications:
   - Only the first listed token NEEDS workflows scope
+
+[3.0.2]
+# worflow fix and ETag-caching:
+- Fixed the encoded token being fed to the GitHub API on worflow updates
+- Now uses ETag-Caching for get opperation via direct API requests to reduce quota usage
