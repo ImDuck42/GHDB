@@ -3,6 +3,8 @@
 ### Very Bad Issues
 
 * [ X ] Fix all current issues
+* [ X ] Bulkadd always conflicts on collections
+* [ X ] Decode URI weirden urls e.g.
 
 ### Structure / Architecture
 
@@ -16,15 +18,15 @@
 * [ X ] Store each user in a separate JSON in _auth
     * [ X ] Use user ID as file name for those
 * [ X ] Seperate api from raw branch, use master as default raw
+* [ X ] Add a function to allow file uploads uploadFile(~~sumparam~~ fileBlob, 'fileName')
 * [ _ ] Add folder nesting when approaching the 1k files per directory limit eg. /data/stuff/stuff{1}/stuff{2}/...
-* [ _ ] Add a function to allow file uploads uploadFile(sumparam)
 
 ### Code Cleanup
 
 * [ X ] Remove `decodeToken` function
 * [ X ] Use `encode` for decoding (XOR symmetry)
 * [ X ] Remove comment about reversal logic since it makes attacks easier
-* [ _ ] No manual internal files list: anything stating with _ is internal and cannot be used for any file-name start
+* [ X ] No manual internal files list: anything stating with _ is internal and cannot be used for any file-name start
 
 ### Security
 
@@ -49,3 +51,4 @@
 * [ X ] Remove legacy normalization of user role when it was no array
 * [ X ] Edit and move the subscribe function to work on collections and keys
 * [ X ] Branch hav to be passed in ['arrays', 'yuh'] and if yes when fetching looks at the updated time and fetching data from the newest one
+* [ _ ] Express flag that skip workflow and write to index directly

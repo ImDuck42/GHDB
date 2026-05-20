@@ -40,6 +40,9 @@ All data is stored as individual JSON files. Every record's full history is pres
   - [bulkRemove](#bulkremove)
   - [clear](#clear)
   - [subscribe](#subscribe)
+  - [uploadFile](#uploadfile)
+  - [getFile](#getfile)
+  - [listUploads](#listuploads)
 - [Subcollections](#subcollections)
 - [Key-value store](#key-value-store)
 - [Authentication](#authentication)
@@ -151,7 +154,7 @@ const db = await GitHubDB.owner({
   rawBranches: ['main', 'master'],              // optional, defaults to [branch]
   basePath:    'data',                          // optional, default: 'data'
   useRaw:      true,                            // optional, default: true
-  storage:     null,                            // optional, custom session storage for SSR
+  pepper:      'my-custom-pepper',              // optional, custom password pepper
 })
 ```
 
@@ -176,7 +179,7 @@ const db = await GitHubDB.public({
   basePath:     'data',                        // optional, default: 'data'
   useRaw:       true,                          // optional, default: true
   enrollToken:  true,                          // optional, default: true
-  storage:      null,                          // optional, custom session storage for SSR
+  pepper:       'my-custom-pepper',            // optional, custom password pepper
 })
 ```
 
@@ -378,8 +381,52 @@ const stop = posts.subscribe(
 stop() // cancel polling
 ```
 
-`subscribe` uses directory listing SHAs to detect changes without fetching every file on every tick.  
-Only changed or new files are re-fetched.
+`subscribe` uses directory listing SHAs to detect changes. In API mode, only changed or new files are re-fetched.  
+In raw mode, the entire directory is re-fetched when any entry changes, then filtered by content comparison to determine actual additions and modifications.
+
+### uploadFile
+
+Upload a binary file into the collection's `_uploads/` folder.  
+The file is stored as base64. The `_index.json` for the uploads folder is maintained automatically by the [indexer workflow](#indexer-workflow).
+
+```js
+const result = await posts.uploadFile(fileBlob, 'avatar')
+// -> { path: 'data/posts/_uploads/2026-05-18-photo.jpg', safeName: '2026-05-18-photo.jpg', originalName: 'photo.jpg', tag: 'avatar' }
+```
+
+`fileName` is a logical tag used for later lookup. If omitted it defaults to the file's own name, or `'upload'` if that is also absent.  
+`safeName` is the actual filename written to the repo: `<timestamp>-<originalName>` with spaces replaced by underscores.
+
+### getFile
+
+Retrieve the `raw.githubusercontent.com` URL for an uploaded file — use it directly in `<img>`, `<video>`, fetch, etc.
+
+- **Exact match** on `safeName` — returns a single-element array of `{ safeName, url }`.
+- **Partial match** — returns an array of `{ safeName, url }` for all matches.  
+The timestamp prefix is stripped before matching, so `'photo'` matches `'2026-05-18-photo.jpg'`.
+
+```js
+// Exact
+const [result] = await posts.getFile('2026-05-18-photo.jpg')
+// -> { safeName: '2026-05-18-photo.jpg', url: 'https://raw.githubusercontent.com/...' }
+
+// Partial
+const matches = await posts.getFile('photo')
+// -> [{ safeName: '2026-05-18-photo.jpg', url: 'https://raw.githubusercontent.com/...' }]
+```
+
+Returns an empty array `[]` if the uploads index does not exist yet or no match is found.
+
+### listUploads
+
+List all filenames in the collection's `_uploads/` folder.
+
+```js
+const files = await posts.listUploads()
+// -> ['2026-05-18-photo.jpg', '2026-05-19-banner.png']
+```
+
+Returns an empty array if no files have been uploaded yet.
 
 ---
 
@@ -424,8 +471,8 @@ await db.kv.setMany({ key1: 'a', key2: 'b' })
 await db.kv.getAll()                  // -> { theme: 'dark', ... }
 
 // Poll for changes
-const stop = db.kv.subscribe(({ records, added, changed, removed }) => {
-  console.log('all:', records)
+const stop = db.kv.subscribe(({ entries, added, changed, removed }) => {
+  console.log('all:', entries)
 }, 5000)
 
 stop() // cancel polling
@@ -487,7 +534,8 @@ const valid = await db.auth.verifySession() // -> true or false
 
 ### changePassword
 
-Change a user's password. The current password must be provided.
+Change a user's password. The current password must be provided.  
+Admins can bypass the current password check entirely.
 
 ```js
 await db.auth.changePassword('alice', 'old-password', 'new-password')
@@ -498,6 +546,7 @@ await db.auth.changePassword('alice', 'old-password', 'new-password')
 
 Permanently delete a user account.  
 The account's password must be supplied.  
+Admins can bypass the password check entirely.  
 If the currently logged-in user deletes their own account, the session is cleared automatically.
 
 ```js
@@ -627,20 +676,22 @@ Anyone with access to the source and the library can reverse the encoding — tr
 
 The internal PBKDF2 hashing functions are exposed as public static methods, useful for safely storing a PAT hash for later verification.
 
-### GitHubDB.hashSecret(secret, context?)
+### GitHubDB.hashSecret(secret, context?, pepper?)
 
 Hashes a value with PBKDF2-SHA256 at 200,000 iterations with a random 128-bit salt.  
-Returns `<hex-salt>:<hex-derived-key>`. An optional `context` string binds the hash to a specific use (e.g. a username).
+Returns `<hex-salt>:<hex-derived-key>`. An optional `context` string binds the hash to a specific use (e.g. a username).  
+An optional `pepper` overrides the library's default global pepper — pass the same custom pepper you used in `GitHubDB.owner()` / `GitHubDB.public()` if you set one.
 
 ```js
 const hash = await GitHubDB.hashSecret('ghp_myToken', 'optional-context')
 await db.kv.set('pat_hash', hash)
 ```
 
-### GitHubDB.verifySecret(secret, storedHash, context?)
+### GitHubDB.verifySecret(secret, storedHash, context?, pepper?)
 
 Verify a plaintext value against a hash produced by `hashSecret`.  
-Uses constant-time comparison to prevent timing attacks. `context` must match the one used during hashing.
+Uses constant-time comparison to prevent timing attacks. `context` must match the one used during hashing.  
+Pass the same `pepper` if a custom one was used.
 
 ```js
 const ok = await GitHubDB.verifySecret('ghp_myToken', hash)
@@ -745,10 +796,10 @@ Then reads from the one with the most recently updated file which is useful for 
 
 ## Index files
 
-Every directory automatically maintains an `_index.json` file listing its JSON children.  
-This allows directory listings to avoid API calls entirely when `useRaw: true`, falling back to the API only when the index is missing.
+Every directory maintains an `_index.json` file listing its contents.  
+This allows directory listings to skip API calls entirely when `useRaw: true`, falling back to the GitHub API only when the index is missing.
 
-Index updates happen asynchronously after every write or delete and are retried on conflict.  
+Index files are maintained exclusively by the [indexer workflow](#indexer-workflow) — they are not updated on every write by the library itself.  
 You do not need to manage `_index.json` manually.
 
 ---
@@ -802,7 +853,12 @@ Treat the bot token as a shared secret with known limited scope, not a private c
 All collection names, record IDs, and KV keys are validated against `^[a-zA-Z0-9_\-]+$` before constructing file paths.  
 Values outside this set throw immediately.
 
-**Public token registry.**
+**Origin checking.**
+On first initialization, the current origin is automatically registered in `_kv/_origins.json`.  
+Subsequent initializations from a different origin throw a `DatabaseError` listing the exact origin string to add.  
+This is a best-effort fingerprint to help detect unauthorized deployments — it is not a security boundary.
+
+**Public token registry**
 Tokens used in public mode are registered in `_kv/_public.json`.  
 Owner mode checks this list on initialization and refuses to proceed if the token appears in it, preventing a public token from being used for owner-mode access.
 
@@ -832,9 +888,6 @@ When using `useRaw: true`, freshly committed data may not be immediately visible
 **Session storage.**
 In Node.js, sessions are in-memory and do not survive process restarts.  
 In the browser, sessions are limited to the tab's `sessionStorage` lifetime.
-
-**No binary data.**
-All storage is JSON. Binary content must be base64-encoded manually before storing.
 
 **Repository size.**
 GitHub has soft limits on repository size.  

@@ -1,13 +1,15 @@
 export async function generateIndexerWorkflow(owner, repo, token, basePath) {
   const api  = 'https://api.github.com'
-  const base = basePath.replace(/^\/+|\/+$/g, '')
+  const base = basePath.replace(/^\/+|\/+$/g, '') || '.'
   const path = '.github/workflows/indexer.yml'
-  const yaml = `name: Merge Index Updates
+  
+  const yaml = `name: Rebuild Index Files
 
 on:
   push:
     paths:
-      - '${base}/**.json'
+      - '${base}/**'
+      - '!${base}/**/_index.json'
       - '${path}'
 
 concurrency:
@@ -27,17 +29,21 @@ jobs:
 
       - name: Rebuild _index.json files
         run: |
-          INTERNAL="^_index\\.json$"
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%S).$(printf '%03d' $(( 10#$(date -u +%N | cut -c1-3) )))Z"
 
-          find ${base} \\
-            -name '*.json' -not -name '_index.json' -print \\
-          | sed 's|/[^/]*$||' \\
+          find "${base}" -mindepth 1 -type d | while IFS= read -r DIR; do
+            if [ ! -f "$DIR/_index.json" ]; then
+              printf '{\\n  "files": [],\\n  "updatedAt": "%s"\\n}\\n' "$TIMESTAMP" > "$DIR/_index.json"
+              echo "bootstrapped $DIR/_index.json"
+            fi
+          done
+
+          find "${base}" -name '_index.json' -printf '%h\\n' \\
           | sort -u \\
           | while IFS= read -r DIR; do
 
               mapfile -t FILES < <(
-                find "$DIR" -maxdepth 1 -name '*.json' -not -name '_index.json' -printf '%f\\n' \\
+                find "$DIR" -maxdepth 1 -mindepth 1 -not -name '_index.json' -not -name '.*' -printf '%f\\n' \\
                 | sort
               )
 
@@ -86,14 +92,14 @@ jobs:
           git config user.name  "GHDB-Bot"
           git config user.email "bot@ghdb.local"
 
-          git add .
+          find "${base}" -name '_index.json' -print0 | xargs -0 -r git add --
           git diff --cached --quiet && echo "No index changes to commit." && exit 0
 
           git commit -m "workflow: rebuild _index.json files [skip ci]"
           git push
 `;
 
-  const apiUrl = `${api}/repos/${owner}/${repo}/contents/${path}`;
+  const apiUrl = `${api}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
   const headers = {
     'Authorization':        `Bearer ${token}`,
     'Accept':               'application/vnd.github+json',
@@ -101,27 +107,29 @@ jobs:
     'X-GitHub-Api-Version': '2026-03-10',
   };
 
-let sha;
-const existing = await fetch(apiUrl, { headers });
+  let sha;
+  const existing = await fetch(apiUrl, { headers });
+  const encoded  = btoa(String.fromCharCode(...new TextEncoder().encode(yaml)));
 
-if (existing.ok) {
-  const existingData = await existing.json();
-  sha = existingData.sha;
+  if (existing.status === 404) {
+  } else if (!existing.ok) {
+    throw new Error(`Cannot read existing workflow: ${existing.status} ${await existing.text()}`);
+  } else {
+    const existingData = await existing.json();
+    sha = existingData.sha;
 
-  const newContent = btoa(unescape(encodeURIComponent(yaml)));
-  const oldContent = existingData.content.replace(/\n/g, '');
-
-  if (oldContent === newContent) {
-    return { created: false, url: existingData.html_url };
+    const oldContent = existingData.content.replace(/\n/g, '');
+    if (oldContent === encoded) {
+      return { created: false, url: existingData.html_url };
+    }
   }
-}
 
   const res = await fetch(apiUrl, {
     method:  'PUT',
     headers,
     body:    JSON.stringify({
       message: 'workflow: update indexer workflow',
-      content: btoa(unescape(encodeURIComponent(yaml))),
+      content: encoded,
       ...(sha ? { sha } : {}),
     }),
   });

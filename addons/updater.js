@@ -11,8 +11,8 @@ export async function checkForUpdate(DATABASE_VERSION) {
     return false;
   };
 
-  const isOutdated = (latest, current) =>
-    isNewerVersion(latest, current);
+  const localStorageGet = key => { try { return localStorage.getItem(key) } catch { return null } }
+  const localStorageSet = (key, val) => { try { localStorage.setItem(key, val) } catch {} }
 
   try {
     const scriptText = await fetch(
@@ -23,7 +23,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
       /DATABASE_VERSION\s*=\s*['"]([^'"]+)/
     )?.[1];
 
-    if (!latestVersion || !isOutdated(latestVersion, DATABASE_VERSION))
+    if (!latestVersion || !isNewerVersion(latestVersion, DATABASE_VERSION))
       return console.log(`GHDB up to date (${DATABASE_VERSION})`);
 
     const changelogText = await fetch(
@@ -39,7 +39,7 @@ export async function checkForUpdate(DATABASE_VERSION) {
           : null;
       })
       .filter(entry =>
-        entry && isOutdated(entry.version, DATABASE_VERSION)
+        entry && isNewerVersion(entry.version, DATABASE_VERSION)
       )
       .map(({ version, body }) => `[${version}]\n${body}`)
       .join('\n\n');
@@ -47,13 +47,10 @@ export async function checkForUpdate(DATABASE_VERSION) {
     if (!relevantEntries)
       return console.log(`GHDB up to date (${DATABASE_VERSION})`);
 
-    const formattedEntries = relevantEntries.replace(
-      /(\[[\d.]+\])/g,
-      '%c$1%c'
-    );
-
-    const versionTags =
-      relevantEntries.match(/\[[\d.]+\]/g) ?? [];
+    const versionTags = relevantEntries.match(/\[[\d.]+\]/g) ?? [];
+    const formattedEntries = versionTags.reduce((acc, tag) => {
+      return acc.replace(tag, `%c${tag}%c`);
+    }, relevantEntries);
 
     console.log(
       `%cGHDB Update available! %c${DATABASE_VERSION} >> ${latestVersion}%c\n=> https://github.com/ImDuck42/GHDB\n\n${formattedEntries}\n`,
@@ -66,64 +63,84 @@ export async function checkForUpdate(DATABASE_VERSION) {
       ]),
     );
 
-    if (localStorage.getItem('suppressUpdatePopup') === 'true')
+    const suppressKey = `suppressUpdatePopup_${latestVersion}`
+
+    if (localStorageGet(suppressKey) === 'true')
       return;
 
-    const popup = Object.assign(document.createElement('div'), {
-      innerHTML: `
-        <strong>GHDB Update available: v${latestVersion}</strong>
-        <p>Check the console for changes.</p>
-        <button id="update-popup-close">Close</button>
-        <button id="update-popup-suppress">Don't show again</button>
-      `
-    });
+    const showPopup = () => {
+      const popup = Object.assign(document.createElement('div'), {
+        innerHTML: `
+          <strong>GHDB Update available: v${latestVersion}</strong>
+          <p>Check the console for changes.</p>
+          <button id="update-popup-close">Close</button>
+          <button id="update-popup-suppress">Don't show again</button>
+        `
+      });
 
-    Object.assign(popup.style, {
-        all:       'initial',
-        inset:     'auto 10px 10px auto',
-        display:   'block',
-        position:  'fixed',
-        boxSizing: 'content-box',
+      Object.assign(popup.style, {
+          all:       'initial',
+          inset:     'auto 10px 10px auto',
+          display:   'block',
+          position:  'fixed',
+          boxSizing: 'content-box',
 
-        zIndex:       '99999',
-        background:   '#f9e2af',
-        color:        '#11111b',
-        border:       '1px solid #11111b',
-        borderRadius: '5px',
-        maxWidth:     '250px',
-        padding:      '10px',
-        fontFamily:   'sans-serif',
-        fontSize:     '15px',
-        lineHeight:   '1.8',
-    });
+          zIndex:       '99999',
+          background:   '#f9e2af',
+          color:        '#11111b',
+          border:       '1px solid #11111b',
+          borderRadius: '5px',
+          maxWidth:     '250px',
+          padding:      '10px',
+          fontFamily:   'sans-serif',
+          fontSize:     '15px',
+          lineHeight:   '1.8',
+      });
 
-    const buttons = popup.querySelectorAll('button');
-    buttons.forEach(btn => {
-        Object.assign(btn.style, {
-            all:          'initial',
-            display:      'inline-block',
-            cursor:       'pointer',
-            padding:      '5px 10px',
-            marginRight:  '5px',
-            border:       '1px solid #11111b',
-            borderRadius: '5px',
-            background:   '#f5d180',
-        });
-    });
+      const buttons = popup.querySelectorAll('button');
+      buttons.forEach(btn => {
+          Object.assign(btn.style, {
+              all:          'initial',
+              display:      'inline-block',
+              cursor:       'pointer',
+              padding:      '5px 10px',
+              marginRight:  '5px',
+              border:       '1px solid #11111b',
+              borderRadius: '5px',
+              background:   '#f5d180',
+          });
+      });
 
-    document.body.appendChild(popup);
+      document.body.appendChild(popup);
 
-    const closeBtn = popup.querySelector('#update-popup-close');
-    const suppressBtn = popup.querySelector('#update-popup-suppress');
+      const closeBtn    = popup.querySelector('#update-popup-close');
+      const suppressBtn = popup.querySelector('#update-popup-suppress');
 
-    closeBtn.addEventListener('click', () => popup.remove());
+      closeBtn.addEventListener('click', () => {
+        popup.remove();
+      }, { once: true });
 
-    suppressBtn.addEventListener('click', () => {
-      localStorage.setItem('suppressUpdatePopup', 'true');
-      popup.remove();
-    });
+      suppressBtn.addEventListener('click', () => {
+        try {
+          Object.keys(localStorage)
+            .filter(key => key.startsWith('suppressUpdatePopup_'))
+            .forEach(key => localStorage.removeItem(key))
+        } catch {}
+        localStorageSet(suppressKey, 'true');
+        popup.remove();
+      }, { once: true });
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', showPopup);
+    } else {
+      showPopup();
+    }
+
+    return { updated: false, latestVersion };
 
   } catch (err) {
     console.error('Update check failed:', err);
+    return { updated: false, error: err.message };
   }
 }

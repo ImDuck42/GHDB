@@ -25,10 +25,10 @@
  *  Any entry not listed defaults to { read: 'admin', write: 'admin' }.
  *
  *  Permission levels:
- *    'public'   — anyone, no login required
- *    'auth'     — any logged-in user
- *    'admin'    — admin role only (the first registered user is automatically admin)
- *    custom     — any string or array of strings, e.g. 'moderator' or ['editor', 'moderator']
+ *    'public' — anyone, no login required
+ *    'auth'   — any logged-in user
+ *    'admin'  — admin role only (the first registered user is automatically admin)
+ *    custom   — any string or array of strings, e.g. 'moderator' or ['editor', 'moderator']
  *  Admins always pass any permission check regardless of the required level.
  *
  *  db.permissions({
@@ -62,6 +62,10 @@
  *    await posts.exists(id)                                                            // boolean
  *    await posts.bulkAdd([{ ... }, { ... }])                                           // add many
  *    await posts.bulkRemove([id1, id2])                                                // remove many
+ *    await posts.uploadFile(fileBlob, 'avatar')                                        // upload a file
+ *    await posts.getFile('2026-05-18-photo.jpg')                                       // exact -> array of matched
+ *    await posts.getFile('photo')                                                      // partial -> array of matches
+ *    await posts.listUploads()                                                         // list all uploads
  *    await posts.clear()                                                               // delete all (irreversible)
  *    const stop = posts.subscribe(({ records, added, changed, removed }) => { }, 5000) // poll for changes
  *    stop()                                                                            // cancel subscription
@@ -85,20 +89,20 @@
  *    await db.kv.getMany(['key1', 'key2'])                                             // array form also accepted
  *    await db.kv.setMany({ key1: v1, key2: v2 })
  *    await db.kv.getAll()                                                              // { key: value } for all KV entries
- *    const stop = db.kv.subscribe(({ records, added, changed, removed }) => { }, 5000) // poll for changes
+ *    const stop = db.kv.subscribe(({ entries, added, changed, removed }) => { }, 5000) // poll for changes
  *    stop()                                                                            // cancel subscription
  *
  * ═══ AUTH  (stored at <basePath>/_auth/<username>.json per user) ════════════════════════════════════════════════════════════════════════
  *
- *    await db.auth.register(username, password)           // -> safe user object { id, username, roles, createdAt }
- *    await db.auth.login(username, password)              // -> safe user object
- *    await db.auth.verifySession()                        // -> boolean
- *    await db.auth.changePassword(username, oldPw, newPw)
- *    await db.auth.deleteAccount(username, password)
- *    await db.auth.listUsers()                            // safe fields only
- *    await db.auth.setRoles(username, roles)              // admin only
- *    db.auth.currentUser                                  // { id, username, roles, createdAt } | null
- *    db.auth.isLoggedIn                                   // boolean
+ *    await db.auth.register(username, password)                       // -> safe user object { id, username, roles, createdAt }
+ *    await db.auth.login(username, password)                          // -> safe user object
+ *    await db.auth.verifySession()                                    // -> boolean
+ *    await db.auth.changePassword(username, oldPassword, newPassword) // admin bypasses oldPassword check
+ *    await db.auth.deleteAccount(username, password)                  // admin bypasses password check
+ *    await db.auth.listUsers()                                        // safe fields only
+ *    await db.auth.setRoles(username, roles)                          // admin only
+ *    db.auth.currentUser                                              // { id, username, roles, createdAt } | null
+ *    db.auth.isLoggedIn                                               // boolean
  *    db.auth.logout()
  *
  *    Roles: the first registered user gets ['admin']. All others default to ['user'].
@@ -128,7 +132,7 @@
 
 // ═══ Constants ════════════════════════════════════════════════════════════════
 
-const DATABASE_VERSION    = '3.0.2'
+const DATABASE_VERSION    = '3.1.0'
 const GITHUB_API_BASE     = 'https://api.github.com'
 const RAW_GITHUB_BASE     = 'https://raw.githubusercontent.com'
 const GITHUB_API_VERSION  = '2026-03-10'
@@ -146,11 +150,8 @@ const PBKDF2_ITERATIONS = 200_000
 const ENCODE_PREFIX     = 'ghdb_enc_'
 const TOKEN_XOR_KEY     = 'GHDB'
 
-// Internal filenames written by the auth system.
-const INTERNAL_FILENAMES = new Set(['_admin-exists.json', '_index.json', '_public.json', '_origins.json'])
 
-
-// ═══ ADDON MANAGEMENT ═════════════════════════════════════════════════════════
+// ═══ ADDONS ═══════════════════════════════════════════════════════════════════
 
 const ADDON_BASE = 'https://imduck42.github.io/GHDB/addons'
 
@@ -158,15 +159,15 @@ const ADDON_BASE = 'https://imduck42.github.io/GHDB/addons'
 try {
   const DATABASE_UPDATER = await import(`${ADDON_BASE}/updater.js`)
   await DATABASE_UPDATER.checkForUpdate(DATABASE_VERSION)
-} catch { }
+} catch { /* updater is optional */ }
 
-// Import the workflow indexer addon
+// Import the workflow indexer addon.
 const INDEX_WORKFLOW = await import(
-  `${ADDON_BASE}/workflow.js` // herefore disable manual _inddex.js updates via js
-)
+  `${ADDON_BASE}/workflow.js`
+) // catch { /* Sike, u need this*/ }
 
 /**
- * Uses the imported  workflow module to create a wrapper function using the first token.
+ * Uses the imported workflow module to create a wrapper function using the first token.
  * @param {string}   owner
  * @param {string}   repo
  * @param {string[]} tokens
@@ -177,7 +178,7 @@ async function installWorkflow(owner, repo, tokens, basePath) {
     const token = resolveToken(tokens[0])
     await INDEX_WORKFLOW.generateIndexerWorkflow(owner, repo, token, basePath)
   } catch (error) {
-    throw new DatabaseError(`Could not update indexer workflow: ${error.message}`)
+    throw new DatabaseError(`Could not update indexer workflow: ${error.message}`, 500)
   }
 }
 
@@ -206,11 +207,43 @@ class DatabaseError extends Error {
  * @param {string} id
  */
 function assertValidId(id) {
-  if (typeof id !== 'string' || !/^[a-zA-Z0-9_\-]+$/.test(id)) {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_\-]*$/.test(id)) {
     throw new DatabaseError(
-      `Invalid ID or key: "${id}". Use letters, numbers, hyphens, and underscores only.`
+      `Invalid ID or key: "${id}". Must use letters, numbers, hyphens, and underscores only.`, 400
     )
   }
+}
+
+/**
+ * Validates factory configuration to catch misconfigurations early.
+ * @param {{owner:string, repo:string, branch:string, tokens?:string[], publicTokens?:string[], basePath:string}} config
+ */
+function assertValidConfig({ owner, repo, branch, tokens, publicTokens, basePath }) {
+  if (!owner || !repo || !branch) {
+    throw new DatabaseError('owner, repo, and branch are required', 400)
+  }
+  const tokenArray = tokens || publicTokens
+  if (!Array.isArray(tokenArray) || !tokenArray.length) {
+    throw new DatabaseError('At least one token is required', 400)
+  }
+  if (/[?#]|(?:^|\/)\.\.?(?:\/|$)/.test(basePath)) {
+    throw new DatabaseError('Invalid basePath', 400)
+  }
+}
+
+/**
+ * Recursively strip prototype-pollution keys from a plain object.
+ * @param   {unknown} object
+ * @returns {unknown}
+ */
+function sanitizeKeys(object) {
+  if (!object || typeof object !== 'object' || Array.isArray(object)) return object
+  const clean = {}
+  for (const key of Object.keys(object)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+    clean[key] = sanitizeKeys(object[key])
+  }
+  return clean
 }
 
 
@@ -221,17 +254,10 @@ function assertValidId(id) {
  * @returns {string}
  */
 function generateId() {
-  const timestamp = Date.now().toString(36)
-  let randomPart
-
-  try {
-    randomPart = Array.from(crypto.getRandomValues(new Uint8Array(6)))
-      .map(byte => byte.toString(36).padStart(2, '0'))
-      .join('')
-  } catch {
-    randomPart = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString(36).slice(0, 12)
-  }
-
+  const timestamp  = Date.now().toString(36)
+  const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+    .map(byte => byte.toString(36).padStart(2, '0'))
+    .join('')
   return `${timestamp}-${randomPart}`
 }
 
@@ -244,9 +270,6 @@ function generateId() {
  * @returns {string}
  */
 function encodeBase64(text) {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(text, 'utf-8').toString('base64')
-  }
   const bytes  = new TextEncoder().encode(text)
   const chunks = []
   for (let offset = 0; offset < bytes.length; offset += 8192) {
@@ -256,15 +279,26 @@ function encodeBase64(text) {
 }
 
 /**
+ * Convert a File/Blob to a base64 string.
+ * @param   {File|Blob} file
+ * @returns {Promise<string>}
+ */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.readAsDataURL(file)
+    reader.onload  = () => resolve(reader.result.split(',')[1])
+    reader.onerror = () => reject(new Error('File read failed'))
+  })
+}
+
+/**
  * Decode a base64 string to UTF-8.
  * @param   {string} base64
  * @returns {string}
  */
 function decodeBase64(base64) {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(base64, 'base64').toString('utf-8')
-  }
-  const binaryString = atob(base64.replace(/\n/g, ''))
+  const binaryString = atob(base64.replace(/\s/g, ''))
   const bytes        = new Uint8Array(binaryString.length)
   for (let index = 0; index < binaryString.length; index++) {
     bytes[index] = binaryString.charCodeAt(index)
@@ -319,12 +353,13 @@ function resolveToken(token) {
  * @param   {string}     secret
  * @param   {string}     context Optional binding context (e.g. username).
  * @param   {Uint8Array} salt
+ * @param   {string}     pepper  Optional pepper override.
  * @returns {Promise<string>}
  */
-async function deriveKey(secret, context, salt) {
+async function deriveKey(secret, context, salt, pepper) {
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(secret + PASSWORD_PEPPER + context),
+    new TextEncoder().encode(secret + pepper + context),
     { name: 'PBKDF2' },
     false,
     ['deriveBits']
@@ -350,33 +385,30 @@ const bytesToHex = bytes => Array.from(bytes).map(byte => byte.toString(16).padS
  * Hash a secret using PBKDF2-SHA256.  
  * Output format: `<hex-salt>:<hex-derived-key>`.
  * @param   {string} secret
- * @param   {string} [context=''] Extra binding context (e.g. the username).
+ * @param   {string} [context='']             Extra binding context (e.g. the username).
+ * @param   {string} [pepper=PASSWORD_PEPPER] Optional custom pepper.
  * @returns {Promise<string>}
- *
- * @example
- * const storedHash = await GitHubDB.hashSecret('ghp_myToken')
- * await db.kv.set('pat_hash', storedHash)
- * const ok = await GitHubDB.verifySecret('ghp_myToken', storedHash)
  */
-async function hashSecret(secret, context = '') {
+async function hashSecret(secret, context = '', pepper = PASSWORD_PEPPER) {
   const saltBytes = crypto.getRandomValues(new Uint8Array(16))
-  return `${bytesToHex(saltBytes)}:${await deriveKey(secret, context, saltBytes)}`
+  return `${bytesToHex(saltBytes)}:${await deriveKey(secret, context, saltBytes, pepper)}`
 }
 
 /**
  * Verify a plaintext secret against a hash produced by {@link hashSecret}.  
  * Uses constant-time comparison to prevent timing attacks.
  * @param   {string} secret
- * @param   {string} storedHash   Value returned by `hashSecret`.
- * @param   {string} [context=''] Must match the context used during hashing.
+ * @param   {string} storedHash               Value returned by `hashSecret`.
+ * @param   {string} [context='']             Must match the context used during hashing.
+ * @param   {string} [pepper=PASSWORD_PEPPER] Optional custom pepper.
  * @returns {Promise<boolean>}
  */
-async function verifySecret(secret, storedHash, context = '') {
+async function verifySecret(secret, storedHash, context = '', pepper = PASSWORD_PEPPER) {
   const [saltHex, expectedKey] = storedHash.split(':')
   if (!saltHex || !expectedKey) return false
 
   const saltBytes    = new Uint8Array(saltHex.match(/.{2}/g).map(pair => parseInt(pair, 16)))
-  const candidateKey = await deriveKey(secret, context, saltBytes)
+  const candidateKey = await deriveKey(secret, context, saltBytes, pepper)
 
   if (candidateKey.length !== expectedKey.length) return false
 
@@ -519,8 +551,14 @@ function subscribeToDirectory({ listEntries, fetchRecord, entryToId, callback, i
           fetched.forEach((record, index) => {
             if (record == null) { return }
             const id = toFetch[index]
-            if (!knownShas.has(id)) { added.push(record) }
-            else                    { changed.push(record) }
+            if (!knownShas.has(id)) {
+              added.push(record)
+            } else {
+              const oldRecord = cachedData.get(id)
+              if (!oldRecord || JSON.stringify(oldRecord) !== JSON.stringify(record)) {
+                changed.push(record)
+              }
+            }
             cachedData.set(id, record)
           })
         }
@@ -551,53 +589,33 @@ function subscribeToDirectory({ listEntries, fetchRecord, entryToId, callback, i
   return () => clearInterval(intervalId)
 }
 
-
 // ═══ Session State ════════════════════════════════════════════════════════════
 
 /**
- * Manages in-memory and sessionStorage login state.  
- * Sessions expire after SESSION_LIFETIME_MS (8 hours).  
- * An optional `storage` dependency can be injected for SSR compatibility.
+ * Manages in-memory and sessionStorage login state.
+ * Sessions expire after SESSION_LIFETIME_MS (8 hours).
  */
 class SessionState {
-  /**
-   * @param {{ getItem(key: string): string|null, setItem(key: string, value: string): void, removeItem(key: string): void }|null} [storage]
-   */
-  usesWebStorage = undefined
-
-  constructor(storage = null) {
+  constructor() {
     this.activeUser = null
-    this.store = storage
-      ?? (typeof globalThis !== 'undefined' && globalThis.sessionStorage)
-      ?? new Map()
-    this.usesWebStorage = typeof this.store.getItem === 'function'
     this.restoreSession()
   }
 
   // ══ Storage Adapters ══════════════════════════════════════════════════════════
 
   storageGet(key) {
-    try {
-      return this.usesWebStorage
-        ? this.store.getItem(key)
-        : (this.store.get(key) ?? null)
-    } catch { return null }
+    try { return sessionStorage.getItem(key) }
+    catch { return null }
   }
 
   storageSet(key, value) {
-    try {
-      this.usesWebStorage
-        ? this.store.setItem(key, value)
-        : this.store.set(key, value)
-    } catch { }
+    try { sessionStorage.setItem(key, value) }
+    catch (err) { console.error('[GitHubDB] Storage write error:', err) }
   }
 
   storageDelete(key) {
-    try {
-      this.usesWebStorage
-        ? this.store.removeItem(key)
-        : this.store.delete(key)
-    } catch { }
+    try { sessionStorage.removeItem(key) }
+    catch (err) { console.error('[GitHubDB] Storage delete error:', err) }
   }
 
   // ══ Session Lifecycle ═════════════════════════════════════════════════════════
@@ -609,6 +627,13 @@ class SessionState {
       if (!raw) { return }
       const session = JSON.parse(raw)
       if (session.expiresAt && Date.now() > session.expiresAt) {
+        this.storageDelete(SESSION_STORAGE_KEY)
+        return
+      }
+      if (!session.user || typeof session.user.username !== 'string'
+        || !Array.isArray(session.user.roles)
+        || typeof session.user.id !== 'string') {
+        
         this.storageDelete(SESSION_STORAGE_KEY)
         return
       }
@@ -694,15 +719,15 @@ class GitHubFilesystem {
   }
 
   /**
-   * Execute a fetch using a random token from the pool.  
+   * Execute a request using a random token from the pool.  
    * If the chosen token fails the call is retried with a different random token.
    * @param   {string}      url
    * @param   {RequestInit} [init]
    * @returns {Promise<Response>}
    */
-  async fetchWithTokenFallback(url, init = { }) {
+  async apiRequest(url, init = { }) {
     const tried = new Set()
-    while (true) {
+    for (let attempt = 0; attempt < this.tokens.length + 1; attempt++) {
       const token = this.pickToken(tried)
       if (!token) {
         throw new DatabaseError('GitHub API request failed: all tokens in the pool are rate-limited or invalid', 429)
@@ -719,6 +744,7 @@ class GitHubFilesystem {
 
       return response
     }
+    throw new DatabaseError('GitHub API request failed: all tokens exhausted', 429)
   }
 
   /**
@@ -727,7 +753,8 @@ class GitHubFilesystem {
    * @returns {string}
    */
   contentsUrl(filePath) {
-    return `${GITHUB_API_BASE}/repos/${this.owner}/${this.repo}/contents/${filePath}`
+    const encodedPath = filePath.split('/').map(encodeURIComponent).join('/')
+    return `${GITHUB_API_BASE}/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/contents/${encodedPath}`
   }
 
   /**
@@ -756,7 +783,7 @@ class GitHubFilesystem {
   // ══ File Read Operations ══════════════════════════════════════════════════════
 
   /**
-   * Fetches the freshest branch from `rawBranches` for a given file path by comparing Last-Modified headers.  
+   * Fetches the freshest branch from `rawBranches` for a given file path by comparing HTTP Last-Modified headers.  
    * Falls back to the first branch if no timestamps are available.
    * @param   {string} filePath
    * @returns {Promise<string>} The branch name with the most recently updated file.
@@ -764,13 +791,17 @@ class GitHubFilesystem {
   async fetchFreshestRaw(filePath) {
     const results = await Promise.all(
       this.rawBranches.map(async branch => {
-        const url = `${RAW_GITHUB_BASE}/${this.owner}/${this.repo}/${branch}/${filePath}`
+        const encodedBranch = branch.split('/').map(encodeURIComponent).join('/')
+        const encodedPath   = filePath.split('/').map(encodeURIComponent).join('/')
+        const encodedUrl = `${RAW_GITHUB_BASE}/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/${encodedBranch}/${encodedPath}`
         try {
-          const response = await fetch(url, { cache: 'reload' })
+          const response = await fetch(encodedUrl, { cache: 'reload' })
           if (!response.ok) { return { data: null, ms: -1 } }
-          const data = await response.json()
-          const ts   = data?.updatedAt ?? data?.createdAt ?? null
-          return { data, ms: ts ? new Date(ts).getTime() : 0 }
+          let data      = null
+          try { data    = await response.json() } catch {}
+          const lastMod = response.headers.get('last-modified')
+          const ms = lastMod ? new Date(lastMod).getTime() : (data?.updatedAt ? new Date(data.updatedAt).getTime() : 0)
+          return { data, ms }
         } catch {
           return { data: null, ms: -1 }
         }
@@ -791,16 +822,22 @@ class GitHubFilesystem {
   async readFile(filePath, raw = false) {
     if (raw) {
       if (this.rawBranches.length === 1) {
-        const url      = `${RAW_GITHUB_BASE}/${this.owner}/${this.repo}/${this.rawBranches[0]}/${filePath}`
-        const response = await fetch(url, { cache: 'reload' })
+        const encodedBranch = this.rawBranches[0].split('/').map(encodeURIComponent).join('/')
+        const encodedPath   = filePath.split('/').map(encodeURIComponent).join('/')
+        const encodedUrl    = `${RAW_GITHUB_BASE}/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/${encodedBranch}/${encodedPath}`
+        const response      = await fetch(encodedUrl, { cache: 'reload' })
         if (response.status === 404) { return null }
         if (!response.ok) { throw new DatabaseError(`Raw read failed (${response.status})`, response.status) }
-        return response.json()
+        try {
+          return await response.json()
+        } catch {
+          return null
+        }
       }
       return this.fetchFreshestRaw(filePath)
     }
     const cached = this.etagCache.get(filePath)
-    const response = await this.fetchWithTokenFallback(`${this.contentsUrl(filePath)}?ref=${this.branch}`, {
+    const response = await this.apiRequest(`${this.contentsUrl(filePath)}?ref=${encodeURIComponent(this.branch)}`, {
       headers: cached?.etag ? { 'If-None-Match': cached.etag } : {},
     })
     if (response.status === 304) { return cached.data }
@@ -812,7 +849,9 @@ class GitHubFilesystem {
     if (Array.isArray(data)) { return null }
     const result = { content: decodeFileContent(data.content), sha: data.sha }
     const etag = response.headers.get('etag')
-    if (etag) this.etagCache.set(filePath, { etag, data: result })
+    if (etag) {
+      this.etagCache.set(filePath, { etag, data: result })
+    }
     return result
   }
 
@@ -821,10 +860,10 @@ class GitHubFilesystem {
    * @param   {string} dirPath
    * @returns {Promise<string[]|null>}
    */
-  async readIndex(dirPath) {
-    const data = await this.readFile(`${dirPath}/_index.json`, true)
-    return data ? (data.files ?? []) : null
-  }
+    async readIndex(dirPath) {
+      const data = await this.readFile(`${dirPath}/_index.json`, true)
+      return data || null
+    }
 
   /**
    * Returns lightweight `{ name, type }` objects from the index, falling back to the API.
@@ -832,9 +871,10 @@ class GitHubFilesystem {
    * @returns {Promise<object[]>}
    */
   async listDirectoryRaw(dirPath) {
-    const files = await this.readIndex(dirPath)
-    if (files === null) { return this.listDirectory(dirPath) }
-    return files.map(name => ({ name, type: 'file' }))
+    const index = await this.readIndex(dirPath)
+    if (index === null) { return this.listDirectory(dirPath) }
+    const sha = index.updatedAt || ''
+    return (index.files ?? []).map(name => ({ name, type: 'file', sha }))
   }
 
   // ══ File Write / Delete Operations ════════════════════════════════════════════
@@ -855,22 +895,38 @@ class GitHubFilesystem {
     }
     if (existingSha) body.sha = existingSha
 
-    const response = await this.fetchWithTokenFallback(this.contentsUrl(filePath), {
+    const response = await this.apiRequest(this.contentsUrl(filePath), {
       method: 'PUT',
       body:   JSON.stringify(body),
     })
 
     if (!response.ok) await this.throwApiError(response, `Write failed (${response.status})`)
-    const result = await response.json()
+    return response.json()
+  }
 
-    // DISABLED
-    //if (filePath.split('/').pop() !== '_index.json') {
-    //  await this.upsertIndex(filePath, 'add').catch(error =>
-    //    console.warn('[GitHubDB] _index.json update failed for', filePath, error)
-    //  )
-    //}
+  /**
+   * Write a raw binary file (e.g. images, GIFs) to the repo without JSON-wrapping.
+   * @param   {string} filePath
+   * @param   {string} base64 Raw base64 content.
+   * @param   {string} commitMessage
+   * @param   {string} [existingSha]
+   * @returns {Promise<object>}
+   */
+  async writeRawFile(filePath, base64, commitMessage, existingSha) {
+    const body = {
+      message: commitMessage,
+      content: base64,
+      branch:  this.branch,
+    }
+    if (existingSha) body.sha = existingSha
 
-    return result
+    const response = await this.apiRequest(this.contentsUrl(filePath), {
+      method: 'PUT',
+      body:   JSON.stringify(body),
+    })
+
+    if (!response.ok) await this.throwApiError(response, `Write failed (${response.status})`)
+    return response.json()
   }
 
   /**
@@ -884,20 +940,12 @@ class GitHubFilesystem {
     const existing = await this.readFile(filePath)
     if (!existing) { return false }
 
-    const response = await this.fetchWithTokenFallback(this.contentsUrl(filePath), {
+    const response = await this.apiRequest(this.contentsUrl(filePath), {
       method: 'DELETE',
       body:   JSON.stringify({ message: commitMessage, sha: existing.sha, branch: this.branch }),
     })
 
     if (!response.ok) { await this.throwApiError(response, `Delete failed (${response.status})`) }
-    
-    // DISABLED
-    //if (filePath.split('/').pop() !== '_index.json') {
-    //  await this.upsertIndex(filePath, 'remove').catch(err =>
-    //    console.warn('[GitHubDB] _index.json update failed for', filePath, err)
-    //  )
-    //}
-
     return true
   }
 
@@ -909,10 +957,10 @@ class GitHubFilesystem {
    * @returns {Promise<object[]>}
    */
   async listDirectory(dirPath) {
-    const url    = `${this.contentsUrl(dirPath)}?ref=${this.branch}`
-    const cached = this.etagCache.get(dirPath)
+    const encodedUrl = `${this.contentsUrl(dirPath)}?ref=${encodeURIComponent(this.branch)}`
+    const cached     = this.etagCache.get(dirPath)
 
-    const response = await this.fetchWithTokenFallback(url, {
+    const response = await this.apiRequest(encodedUrl, {
       headers: cached?.etag ? { 'If-None-Match': cached.etag } : { },
     })
 
@@ -925,43 +973,11 @@ class GitHubFilesystem {
     if (!Array.isArray(data)) { return [] }
 
     const etag = response.headers.get('etag')
-    if (etag) this.etagCache.set(dirPath, { etag, data })
+    if (etag) {
+      this.etagCache.set(dirPath, { etag, data })
+    }
     return data
   }
-
-  // DISABLED
-  // ══ Index Maintenance ═════════════════════════════════════════════════════════
-
-  /**
-   * Add or remove a filename from the `_index.json` file in the same directory.
-   * @param   {string}         filePath Full repo path to the affected file (e.g. `data/posts/abc.json`).
-   * @param   {'add'|'remove'} action
-   * @returns {Promise<void>}
-   */
-  //async upsertIndex(filePath, action) {
-  //  const segments  = filePath.split('/')
-  //  const fileName  = segments.pop()
-  //  const dirPath   = segments.join('/')
-  //  const indexPath = `${dirPath}/_index.json`
-
-  //  await retryOnConflict(async () => {
-  //    const existing   = await this.readFile(indexPath)
-  //    const currentSet = new Set(existing ? (existing.content?.files ?? []) : [])
-
-  //    if (action === 'add') { currentSet.add(fileName) }
-  //    else                  { currentSet.delete(fileName) }
-
-  //    currentSet.delete('_index.json')
-  //    const files = [...currentSet].sort()
-
-  //    await this.writeFile(
-  //      indexPath,
-  //      { files, updatedAt: new Date().toISOString() },
-  //      `index: update ${dirPath}`,
-  //      existing?.sha
-  //    )
-  //  })
-  //}
 
   // ══ Audit & Health ════════════════════════════════════════════════════════════
 
@@ -976,8 +992,8 @@ class GitHubFilesystem {
     const params = new URLSearchParams({ per_page: limit.toString(), sha: this.branch })
     if (path) { params.set('path', path) }
 
-    const response = await this.fetchWithTokenFallback(
-      `${GITHUB_API_BASE}/repos/${this.owner}/${this.repo}/commits?${params}`
+    const response = await this.apiRequest(
+      `${GITHUB_API_BASE}/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/commits?${params}`
     )
 
     if (!response.ok) {
@@ -998,8 +1014,8 @@ class GitHubFilesystem {
    * @returns {Promise<object>} GitHub repo metadata.
    */
   async validateConnection() {
-    const response = await this.fetchWithTokenFallback(
-      `${GITHUB_API_BASE}/repos/${this.owner}/${this.repo}`
+    const response = await this.apiRequest(
+      `${GITHUB_API_BASE}/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`
     )
     if (!response.ok) {
       throw new DatabaseError(
@@ -1103,7 +1119,7 @@ class Collection {
     this.checkPermission('write')
     const id = data.id ?? generateId()
     assertValidId(id)
-    const { id: _stripped, ...rest } = data
+    const { id: stripped, ...rest } = sanitizeKeys(data)
     const record = { id, ...this.withTimestamps(rest) }
     await this.filesystem.writeFile(this.filePathForId(id), record, `${this.name}: add ${id}`)
     return record
@@ -1127,15 +1143,16 @@ class Collection {
   async list({ limit, offset = 0 } = { }) {
     this.checkPermission('read')
     let entries = (await this.listEntries(this.collectionPath))
-      .filter(entry => entry.type === 'file' && !INTERNAL_FILENAMES.has(entry.name))
+      .filter(entry => entry.type === 'file' && !entry.name.startsWith('_') && entry.name.endsWith('.json'))
 
-    if (offset > 0)                           { entries = entries.slice(offset) }
-    if (Number.isInteger(limit) && limit > 0) { entries = entries.slice(0, limit) }
-
-    const records = await runConcurrently(entries, entry =>
+    const records = (await runConcurrently(entries, entry =>
       this.readRecord(`${this.collectionPath}/${entry.name}`)
-    )
-    return records.filter(Boolean)
+    )).filter(Boolean)
+
+    let result = records
+    if (offset > 0)                           { result = result.slice(offset) }
+    if (Number.isInteger(limit) && limit > 0) { result = result.slice(0, limit) }
+    return result
   }
 
   /**
@@ -1153,7 +1170,15 @@ class Collection {
     return retryOnConflict(async () => {
       const file = await this.filesystem.readFile(this.filePathForId(id))
       if (!file) { throw new DatabaseError(`Record not found: ${id}`, 404) }
-      const { id: _id, createdAt: _createdAt, ...safeChanges } = changes
+      const { id: stripped, createdAt: stripped2, ...safeChanges } = sanitizeKeys(changes)
+      const hasChanges = Object.keys(safeChanges).some(
+        key => JSON.stringify(file.content[key]) !== JSON.stringify(safeChanges[key])
+      )
+
+      if (!hasChanges) {
+        return { ...file.content, id }
+      }
+
       const updated = { ...file.content, ...safeChanges, id, updatedAt: new Date().toISOString() }
       await this.filesystem.writeFile(this.filePathForId(id), updated, `${this.name}: update ${id}`, file.sha)
       return updated
@@ -1172,7 +1197,7 @@ class Collection {
     return retryOnConflict(async () => {
       const file = await this.filesystem.readFile(this.filePathForId(id))
       if (!file) { throw new DatabaseError(`Record not found: ${id}`, 404) }
-      const record = { id, ...this.withTimestamps(data, file.content) }
+      const record = { id, ...this.withTimestamps(sanitizeKeys(data), file.content) }
       await this.filesystem.writeFile(this.filePathForId(id), record, `${this.name}: replace ${id}`, file.sha)
       return record
     })
@@ -1185,6 +1210,9 @@ class Collection {
    */
   async remove(id) {
     this.checkPermission('write', id)
+    if (id.startsWith('_')) {
+      throw new DatabaseError(`Cannot delete internal file: ${id}.json`, 403)
+    }
     const deleted = await this.filesystem.deleteFile(this.filePathForId(id), `${this.name}: remove ${id}`)
     return { id, deleted }
   }
@@ -1198,16 +1226,24 @@ class Collection {
   async upsert(id, data) {
     this.checkPermission('write', id)
     return retryOnConflict(async () => {
-      const file = await this.filesystem.readFile(this.filePathForId(id))
+      const file     = await this.filesystem.readFile(this.filePathForId(id))
+      const safeData = sanitizeKeys(data)
 
       if (file) {
-        const { id: _id, createdAt: _createdAt, ...safeChanges } = data
+        const { id: stripped, createdAt, ...safeChanges } = safeData
+        const hasChanges = Object.keys(safeChanges).some(
+          key => JSON.stringify(file.content[key]) !== JSON.stringify(safeChanges[key])
+        )
+
+        if (!hasChanges) {
+          return { ...file.content, id }
+        }
         const updated = { ...file.content, ...safeChanges, id, updatedAt: new Date().toISOString() }
         await this.filesystem.writeFile(this.filePathForId(id), updated, `${this.name}: upsert ${id}`, file.sha)
         return updated
       }
 
-      const { id: _stripped, ...rest } = data
+      const { id: stripped, ...rest } = safeData
       const record = { id, ...this.withTimestamps(rest) }
       await this.filesystem.writeFile(this.filePathForId(id), record, `${this.name}: upsert (create) ${id}`)
       return record
@@ -1231,11 +1267,10 @@ class Collection {
       return results
     }
 
-    const results   = []
-    let batchOffset = 0
-    let skipped     = 0
+    const results = []
+    let skipped   = 0
 
-    while (true) {
+    for (let batchOffset = 0; ; batchOffset += QUERY_BATCH_SIZE) {
       const batch = await this.list({ limit: QUERY_BATCH_SIZE, offset: batchOffset })
       if (batch.length === 0) { break }
 
@@ -1246,7 +1281,6 @@ class Collection {
         if (Number.isInteger(limit) && results.length >= limit) { return results }
       }
 
-      batchOffset += QUERY_BATCH_SIZE
       if (batch.length < QUERY_BATCH_SIZE) { break }
     }
 
@@ -1261,8 +1295,8 @@ class Collection {
   async count(filterFn = null) {
     this.checkPermission('read')
     if (!filterFn) {
-      return (await this.listEntries(this.collectionPath))
-        .filter(entry => entry.type === 'file' && !INTERNAL_FILENAMES.has(entry.name)).length
+    return (await this.listEntries(this.collectionPath))
+      .filter(entry => entry.type === 'file' && !entry.name.startsWith('_') && entry.name.endsWith('.json')).length
     }
     return (await this.list()).filter(filterFn).length
   }
@@ -1274,7 +1308,12 @@ class Collection {
    */
   async exists(id) {
     this.checkPermission('read', id)
-    return !!(await this.readRecord(this.filePathForId(id)))
+    if (this.useRaw) {
+      const entries = await this.listEntries(this.collectionPath)
+      return entries.some(entry => entry.name === `${id}.json`)
+    }
+    const file = await this.filesystem.readFile(this.filePathForId(id))
+    return !!file
   }
 
   // ══ Bulk Operations ═══════════════════════════════════════════════════════════
@@ -1287,12 +1326,14 @@ class Collection {
   async bulkAdd(items) {
     this.checkPermission('write')
     return runConcurrently(items, async item => {
-      const id = item.id ?? generateId()
-      assertValidId(id)
-      const { id: _stripped, ...rest } = item
-      const record = { id, ...this.withTimestamps(rest) }
-      await this.filesystem.writeFile(this.filePathForId(id), record, `${this.name}: add ${id}`)
-      return record
+      return retryOnConflict(async () => {
+        const id = item.id ?? generateId()
+        assertValidId(id)
+        const { id: stripped, ...rest } = sanitizeKeys(item)
+        const record = { id, ...this.withTimestamps(rest) }
+        await this.filesystem.writeFile(this.filePathForId(id), record, `${this.name}: add ${id}`)
+        return record
+      })
     })
   }
 
@@ -1304,6 +1345,9 @@ class Collection {
   async bulkRemove(ids) {
     this.checkPermission('write')
     return runConcurrently(ids, async id => {
+      if (id.startsWith('_')) {
+        throw new DatabaseError(`Cannot delete internal file: ${id}.json`, 403)
+      }
       const deleted = await this.filesystem.deleteFile(this.filePathForId(id), `${this.name}: remove ${id}`)
       return { id, deleted }
     })
@@ -1316,13 +1360,71 @@ class Collection {
   async clear() {
     this.checkPermission('write')
     const ids = (await this.listEntries(this.collectionPath))
-      .filter(entry => entry.type === 'file' && !INTERNAL_FILENAMES.has(entry.name))
+      .filter(entry => entry.type === 'file' && !entry.name.startsWith('_') && entry.name.endsWith('.json'))
       .map(entry => entry.name.replace(/\.json$/, ''))
 
     return runConcurrently(ids, async id => {
       const deleted = await this.filesystem.deleteFile(this.filePathForId(id), `${this.name}: remove ${id}`)
       return { id, deleted }
     })
+  }
+
+  // ══ File Uploads ══════════════════════════════════════════════════════════════
+
+  /**
+   * Upload a binary file into this collection's `_uploads` folder.
+   * @param   {File|Blob} fileData
+   * @param   {string}    [fileName] Logical name / tag for this upload (e.g. 'avatar').
+   * @returns {Promise<{ path: string, safeName: string, originalName: string, tag: string }>}
+   */
+  async uploadFile(fileData, fileName = '') {
+    this.checkPermission('write')
+    const base64   = await fileToBase64(fileData)
+    const tag      = fileName || fileData.name || 'upload'
+    const safeName = `${Date.now()}-${(fileData.name ?? tag).replace(/\s+/g, '_')}`
+    const filePath = `${this.collectionPath}/_uploads/${safeName}`
+
+    await this.filesystem.writeRawFile(filePath, base64, `${this.name}: upload ${safeName}`)
+
+    return { path: filePath, safeName, originalName: fileData.name ?? tag, tag }
+  }
+
+  /**
+   * Retrieve raw.githubusercontent.com URL for uploaded files matching `name`.
+   * - Exact match on `safeName` -> returns the URL string directly.
+   * - Partial match (e.g. 'photo') -> returns an array of `{ safeName, url }`.
+   * @param   {string} name
+   * @returns {Promise<Array<{safeName: string, url: string}>>}
+   */
+  async getFile(name) {
+    this.checkPermission('read')
+    const indexPath = `${this.collectionPath}/_uploads/_index.json`
+    const index     = await this.filesystem.readFile(indexPath, this.useRaw)
+    if (!index) { return [] }
+
+    const files   = (this.useRaw ? index : index.content).files ?? []
+    const rawBase = `${RAW_GITHUB_BASE}/${this.filesystem.owner}/${this.filesystem.repo}/${this.filesystem.rawBranches[0] || this.filesystem.branch}`
+    const toUrl   = safeName => `${rawBase}/${this.collectionPath}/_uploads/${safeName}`
+
+    const exact = files.find(file => file === name)
+    if (exact) { return [{ safeName: exact, url: toUrl(exact) }] }
+
+    const matches = files.filter(file => {
+      const base  = file.replace(/^\d+-/, '')
+      return base.includes(name)
+    })
+    return matches.map(safeName => ({ safeName, url: toUrl(safeName) }))
+  }
+
+  /**
+   * List all uploaded files in this collection.
+   * @returns {Promise<string[]>}
+   */
+  async listUploads() {
+    this.checkPermission('read')
+    const indexPath = `${this.collectionPath}/_uploads/_index.json`
+    const file      = await this.filesystem.readFile(indexPath, this.useRaw)
+    return file ? (this.useRaw ? file.files : file.content.files) : []
   }
 
   // ══ Polling ═══════════════════════════════════════════════════════════════════
@@ -1345,10 +1447,10 @@ class Collection {
    */
   subscribe(callback, intervalMs = 5000, onError = null) {
     return subscribeToDirectory({
-      listEntries: ()    => this.filesystem.listDirectory(this.collectionPath),
+      listEntries: ()    => this.listEntries(this.collectionPath),
       fetchRecord: id    => this.get(id),
       entryToId:   entry =>
-        entry.type === 'file' && !INTERNAL_FILENAMES.has(entry.name)
+        entry.type === 'file' && !entry.name.startsWith('_')
           ? entry.name.replace(/\.json$/, '')
           : null,
       callback,
@@ -1393,6 +1495,17 @@ class KeyValueStore {
     const perms = this.getPermissions()
     const rule  = (key ? perms?.[`_kv.${key}`] : null) ?? perms?.['_kv']
     enforcePermission(`KV${key ? ` key "${key}"` : ' store'}`, operation, rule, this.session)
+  }
+
+  /**
+   * List directory entries, routing to raw or API based on `this.useRaw`.
+   * @param   {string} dirPath
+   * @returns {Promise<object[]>}
+   */
+  listDirEntries(dirPath) {
+    return this.useRaw
+      ? this.filesystem.listDirectoryRaw(dirPath)
+      : this.filesystem.listDirectory(dirPath)
   }
 
   /**
@@ -1474,8 +1587,12 @@ class KeyValueStore {
   async increment(key, by = 1) {
     this.checkPermission('write', key)
     return retryOnConflict(async () => {
-      const file     = await this.filesystem.readFile(this.filePathForKey(key))
-      const newValue = (file ? Number(file.content.value) : 0) + by
+      const file    = await this.filesystem.readFile(this.filePathForKey(key))
+      const current = file ? Number(file.content.value) : 0
+      if (!Number.isFinite(current)) {
+        throw new DatabaseError(`Key "${key}" is not a finite number`, 400)
+      }
+      const newValue = current + by
       await this.filesystem.writeFile(
         this.filePathForKey(key),
         { key, value: newValue, updatedAt: new Date().toISOString() },
@@ -1516,12 +1633,9 @@ class KeyValueStore {
    */
   async getAll() {
     this.checkPermission('read')
-    const dirEntries = this.useRaw
-      ? await this.filesystem.listDirectoryRaw(this.kvPath)
-      : await this.filesystem.listDirectory(this.kvPath)
-
-    const jsonFiles = dirEntries.filter(entry =>
-      entry.name.endsWith('.json') && !INTERNAL_FILENAMES.has(entry.name)
+    const dirEntries = await this.listDirEntries(this.kvPath)
+    const jsonFiles  = dirEntries.filter(entry =>
+      entry.name.endsWith('.json') && !entry.name.startsWith('_')
     )
 
     const pairs = await runConcurrently(jsonFiles, async entry => {
@@ -1537,14 +1651,14 @@ class KeyValueStore {
   /**
    * Poll the key-value store for changes and invoke `callback` with a diff on each change.
    *
-   * @param   {function({ records: object, added: object, changed: object, removed: string[] }): void} callback
+   * @param   {function({ entries: object, added: object, changed: object, removed: string[] }): void} callback
    * @param   {number}                                                                                 [intervalMs=5000] Polling interval in milliseconds.
    * @param   {function(Error): void}                                                                  [onError]         Called on fetch errors (polling continues).
    * @returns {function(): void}                                                                                         Call to stop polling.
    *
    * @example
-   * const stop = db.kv.subscribe(({ records, added, removed }) => {
-   *   console.log('all:', records)
+   * const stop = db.kv.subscribe(({ entries, added, removed }) => {
+   *   console.log('all:', entries)
    * })
    * stop()
    */
@@ -1552,17 +1666,17 @@ class KeyValueStore {
     const pairsToMap = array => Object.fromEntries(array.map(([key, value]) => [key, value]))
 
     return subscribeToDirectory({
-      listEntries: () => this.filesystem.listDirectory(this.kvPath),
+      listEntries: () => this.listDirEntries(this.kvPath),
       fetchRecord: async key => {
         const value = await this.get(key)
         return value != null ? [key, value] : null
       },
       entryToId: entry => {
         if (!entry.name.endsWith('.json')) { return null }
-        return INTERNAL_FILENAMES.has(entry.name) ? null : entry.name.replace(/\.json$/, '')
+        return entry.name.startsWith('_') ? null : entry.name.replace(/\.json$/, '')
       },
       callback: ({ records, added, changed, removed }) => callback({
-        records: pairsToMap(records),
+        entries: pairsToMap(records),
         added:   pairsToMap(added),
         changed: pairsToMap(changed),
         removed,
@@ -1587,11 +1701,13 @@ class AuthManager {
    * @param {SessionState}     session
    * @param {string}           [basePath='data']
    * @param {boolean}          [useRaw=true]
+   * @param {string}           [pepper=PASSWORD_PEPPER] Optional custom pepper for hashing.
    */
-  constructor(filesystem, session, basePath = 'data', useRaw = true) {
+  constructor(filesystem, session, basePath = 'data', useRaw = true, pepper = PASSWORD_PEPPER) {
     this.filesystem = filesystem
     this.session    = session
     this.useRaw     = useRaw
+    this.pepper     = pepper
     this.kvPath     = `${basePath}/_kv`
     this.authPath   = `${basePath}/_auth`
   }
@@ -1604,34 +1720,44 @@ class AuthManager {
   }
 
   /**
-   * Fetch a single user record.
-   *
-   * Pass `raw = true` for read-only operations — returns the parsed user object or `null`.  
-   * Pass `raw = false` (default) when a write will follow — returns `{ user: object, sha: string }` or `null`.
-   *
-   * @param   {string}  username
-   * @param   {boolean} [raw=false]
-   * @returns {Promise<{ user: object, sha: string }|null>} raw=false  
-   *          {Promise<object|null>}                        raw=true
+   * List directory entries, routing to raw or API based on `this.useRaw`.
+   * @param   {string} dirPath
+   * @returns {Promise<object[]>}
    */
-  async fetchUser(username, raw = false) {
-    const file = await this.filesystem.readFile(this.userFilePath(username), raw)
-    if (raw) { return file } // already parsed value or null
+  listDirEntries(dirPath) {
+    return this.useRaw
+      ? this.filesystem.listDirectoryRaw(dirPath)
+      : this.filesystem.listDirectory(dirPath)
+  }
+
+  /**
+   * Fetch a user's parsed record for read-only operations.
+   * @param   {string} username
+   * @returns {Promise<object|null>}
+   */
+  async fetchUserRaw(username) {
+    return this.filesystem.readFile(this.userFilePath(username), true)
+  }
+
+  /**
+   * Fetch a user record with its SHA for write operations.
+   * @param   {string} username
+   * @returns {Promise<{ user: object, sha: string }|null>}
+   */
+  async fetchUserWithSha(username) {
+    const file = await this.filesystem.readFile(this.userFilePath(username))
     return file ? { user: file.content, sha: file.sha } : null
   }
 
   /** Fetch every user record from the _auth directory. */
   async fetchAllUsers() {
-    const dirEntries = this.useRaw
-      ? await this.filesystem.listDirectoryRaw(this.authPath)
-      : await this.filesystem.listDirectory(this.authPath)
-
-    const entries = dirEntries.filter(entry => !INTERNAL_FILENAMES.has(entry.name))
+    const entries = (await this.listDirEntries(this.authPath))
+      .filter(entry => !entry.name.startsWith('_'))
 
     const records = await runConcurrently(entries, async entry => {
       const username = entry.name.replace(/\.json$/, '')
-      if (this.useRaw) { return this.fetchUser(username, true) }
-      const result = await this.fetchUser(username)
+      if (this.useRaw) { return this.fetchUserRaw(username) }
+      const result = await this.fetchUserWithSha(username)
       return result ? result.user : null
     })
 
@@ -1645,6 +1771,19 @@ class AuthManager {
    */
   toPublicUser({ id, username, roles, createdAt }) {
     return { id, username, roles, createdAt }
+  }
+
+  /**
+   * Verify that the current session user is either the target user or an admin.
+   * @param {string} username
+   * @param {string} operation
+   */
+  assertOwnershipOrAdmin(username, operation) {
+    const isSelf = this.session.currentUser?.username?.toLowerCase() === username.toLowerCase()
+    const isAdmin = this.session.currentUser?.roles?.includes('admin')
+    if (!isSelf && !isAdmin) {
+      throw new DatabaseError(`Only the account owner or an admin can ${operation}`, 403)
+    }
   }
 
   // ══ Public API ════════════════════════════════════════════════════════════════
@@ -1664,10 +1803,10 @@ class AuthManager {
     if (!this.session.isLoggedIn) { return false }
 
     const user = this.useRaw
-      ? await this.fetchUser(this.session.currentUser.username, true)
-      : (await this.fetchUser(this.session.currentUser.username))?.user
+      ? await this.fetchUserRaw(this.session.currentUser.username)
+      : (await this.fetchUserWithSha(this.session.currentUser.username))?.user
 
-    if (!user) { 
+    if (!user) {
       this.logout()
       return false
     }
@@ -1699,22 +1838,24 @@ class AuthManager {
       throw new DatabaseError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400)
     }
 
-    const existingRaw = this.useRaw
-      ? await this.fetchUser(username, true)
-      : (await this.fetchUser(username))?.user
-    if (existingRaw) { throw new DatabaseError('That username is already taken', 409) }
+    const adminSentinelPath = `${this.kvPath}/_admin-exists.json`
+    const adminSentinel     = await this.filesystem.readFile(adminSentinelPath, this.useRaw)
+    const isFirstUser       = !adminSentinel
 
-    const newUser = await retryOnConflict(async () => {
-      const adminSentinelPath = `${this.kvPath}/_admin-exists.json`
-      const adminSentinel     = await this.filesystem.readFile(adminSentinelPath, this.useRaw)
-      const isFirstUser       = !adminSentinel
+    const user = {
+      id:           generateId(),
+      username,
+      passwordHash: await hashSecret(password, username.toLowerCase(), this.pepper),
+      createdAt:    new Date().toISOString(),
+      roles:        isFirstUser ? ['admin'] : ['user'],
+    }
 
-      const user = {
-        id:           generateId(),
-        username,
-        passwordHash: await hashSecret(password, username.toLowerCase()),
-        createdAt:    new Date().toISOString(),
-        roles:        isFirstUser ? ['admin'] : ['user'],
+    await retryOnConflict(async () => {
+      const existing = this.useRaw
+        ? await this.fetchUserRaw(username)
+        : (await this.fetchUserWithSha(username))?.user
+      if (existing) {
+        throw new DatabaseError('That username is already taken', 409)
       }
 
       try {
@@ -1725,19 +1866,21 @@ class AuthManager {
         }
         throw writeError
       }
+    })
 
-      if (isFirstUser) {
+    if (isFirstUser) {
+      try {
         await this.filesystem.writeFile(
           adminSentinelPath,
           { createdAt: user.createdAt },
           'auth: mark first admin'
         )
+      } catch (error) {
+        if (error.httpStatus !== 409) throw error
       }
+    }
 
-      return user
-    })
-
-    const publicUser = this.toPublicUser(newUser)
+    const publicUser = this.toPublicUser(user)
     this.session.persistUser(publicUser)
     return publicUser
   }
@@ -1754,11 +1897,11 @@ class AuthManager {
     }
 
     const user = this.useRaw
-      ? await this.fetchUser(username, true)
-      : (await this.fetchUser(username))?.user
-    const isValidPw = user ? await verifySecret(password, user.passwordHash, username.toLowerCase()) : false
+      ? await this.fetchUserRaw(username)
+      : (await this.fetchUserWithSha(username))?.user
+    const isValidPassword = user ? await verifySecret(password, user.passwordHash, username.toLowerCase(), this.pepper) : false
 
-    if (!user || !isValidPw) {
+    if (!user || !isValidPassword) {
       throw new DatabaseError('Invalid username or password', 401)
     }
 
@@ -1771,7 +1914,8 @@ class AuthManager {
   logout() { this.session.clearSession() }
 
   /**
-   * Change the password for an account given the correct current password.
+   * Change the password for an account.  
+   * Admins can bypass the old password check.
    * @param   {string} username
    * @param   {string} currentPassword
    * @param   {string} newPassword
@@ -1781,20 +1925,28 @@ class AuthManager {
     if (newPassword.length < MIN_PASSWORD_LENGTH) {
       throw new DatabaseError(`New password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400)
     }
+
+    const isAdmin = this.session.currentUser?.roles?.includes('admin')
+    if (!isAdmin) {
+      this.assertOwnershipOrAdmin(username, 'change password')
+    }
+
     return retryOnConflict(async () => {
       const file = await this.filesystem.readFile(this.userFilePath(username))
       if (!file) {
         throw new DatabaseError('User not found', 404)
       }
 
-      const isValidPw = await verifySecret(currentPassword, file.content.passwordHash, username.toLowerCase())
-      if (!isValidPw) {
-        throw new DatabaseError('Incorrect current password', 401)
+      if (!isAdmin) {
+        const isValidPassword = await verifySecret(currentPassword, file.content.passwordHash, username.toLowerCase(), this.pepper)
+        if (!isValidPassword) {
+          throw new DatabaseError('Incorrect current password', 401)
+        }
       }
 
       const updated = {
         ...file.content,
-        passwordHash: await hashSecret(newPassword, username.toLowerCase()),
+        passwordHash: await hashSecret(newPassword, username.toLowerCase(), this.pepper),
         updatedAt:    new Date().toISOString(),
       }
       await this.filesystem.writeFile(
@@ -1809,27 +1961,35 @@ class AuthManager {
 
   /**
    * Permanently delete an account.  
+   * Admins can bypass the password check.  
    * If the currently logged-in user deletes their own account they are automatically logged out.
    * @param   {string} username
    * @param   {string} password
    * @returns {Promise<{ deleted: true }>}
    */
   async deleteAccount(username, password) {
+    const isAdmin = this.session.currentUser?.roles?.includes('admin')
+    if (!isAdmin) {
+      this.assertOwnershipOrAdmin(username, 'delete account')
+    }
+
     const file = await this.filesystem.readFile(this.userFilePath(username))
     if (!file) {
       throw new DatabaseError('User not found', 404)
     }
 
-    const isValidPasswd = await verifySecret(password, file.content.passwordHash, username.toLowerCase())
-    if (!isValidPasswd) {
-      throw new DatabaseError('Incorrect password', 401)
+    if (!isAdmin) {
+      const isValidPassword = await verifySecret(password, file.content.passwordHash, username.toLowerCase(), this.pepper)
+      if (!isValidPassword) {
+        throw new DatabaseError('Incorrect password', 401)
+      }
     }
 
     await retryOnConflict(() =>
       this.filesystem.deleteFile(this.userFilePath(username), `auth: delete account ${username}`)
     )
 
-    if (this.session.currentUser?.username === username) this.session.clearSession()
+    if (this.session.currentUser?.username?.toLowerCase() === username.toLowerCase()) this.session.clearSession()
     return { deleted: true }
   }
 
@@ -1873,7 +2033,7 @@ class AuthManager {
       )
 
       const publicUser = this.toPublicUser(updated)
-      if (this.session.currentUser?.username === username) { this.session.persistUser(publicUser) }
+      if (this.session.currentUser?.username?.toLowerCase() === username.toLowerCase()) { this.session.persistUser(publicUser) }
       return publicUser
     })
   }
@@ -1897,29 +2057,33 @@ class GitHubDB {
    * @param {object}           [options]
    * @param {string}           [options.basePath='data']
    * @param {boolean}          [options.useRaw=true]
-   * @param {boolean}          [options.enrollToken=true] Set `false` to skip public-token registration.
-   * @param {SessionState}     [options.storage=null]     Custom session storage (for SSR compatibility).
+   * @param {boolean}          [options.enrollToken=true]       Set `false` to skip public-token registration.
+   * @param {string}           [options.pepper=PASSWORD_PEPPER] Optional custom password pepper.
    */
-  constructor(filesystem, { basePath = 'data', useRaw = true, enrollToken = true, storage = null } = { }) {
+  constructor(filesystem, { basePath = 'data', useRaw = true, enrollToken = true, pepper = PASSWORD_PEPPER } = { }) {
     this.filesystem     = filesystem
-    this.basePath       = basePath
+    this.basePath       = basePath.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/')
     this.useRaw         = useRaw
     this.enrollToken    = enrollToken
-    this.session        = new SessionState(storage)
+    this.pepper         = pepper
+    this.session        = new SessionState()
     this.permissionsMap = null
 
     /** @type {KeyValueStore} */
-    this.kv   = new KeyValueStore(filesystem, basePath, useRaw, this.session, () => this.permissionsMap)
+    this.kv   = new KeyValueStore(filesystem, this.basePath, useRaw, this.session, () => this.permissionsMap)
     /** @type {AuthManager} */
-    this.auth = new AuthManager(filesystem, this.session, basePath, useRaw)
+    this.auth = new AuthManager(filesystem, this.session, this.basePath, useRaw, pepper)
   }
 
   // ══ ORIGIN CHECKING ═══════════════════════════════════════════════════════════
 
-  /**
+  /** 
+   * **CLAUDE told me to add it so here: tHis is jUSt a BeSt eFfoRT fiNgErprinT, nOt sEcuRITy.**
+   * 
    * Check if the current origin is allowed by comparing to the `_origins` key value.  
-   * Called automatically by `GitHubDB.public()` and `GitHubDB.owner()`.
-   * @throws {DatabaseError} If the current origin is not in `_origins`.
+   * Called automatically by `GitHubDB.public()` and `GitHubDB.owner()`.  
+   * Auto-registers the current origin on first run.
+   * @throws {DatabaseError} If the current origin is not in `_origins` and cannot be auto-registered.
    */
   async checkOrigins() {
     if (typeof window === 'undefined') { return }
@@ -1933,11 +2097,10 @@ class GitHubDB {
     if (!file) {
       await this.filesystem.writeFile(
         originsPath,
-        { key: '_origins', value: [], updatedAt: new Date().toISOString() },
-        'kv: init _origins',
-        file?.sha
+        { key: '_origins', value: [origin], updatedAt: new Date().toISOString() },
+        'kv: init _origins'
       )
-      throw new DatabaseError(`Origin not allowed. Add this to _origins: "${origin}"`)
+      return
     }
 
     const patterns = file.content?.value ?? file.value ?? []
@@ -1964,21 +2127,21 @@ class GitHubDB {
     const encodedForm = passedToken.startsWith(ENCODE_PREFIX) ? passedToken : encodeToken(passedToken)
     const publicPath  = `${this.basePath}/_kv/_public.json`
 
-    // Fast raw check first — skip API entirely if already enrolled
     const rawData = await this.filesystem.readFile(publicPath, true)
     if (rawData?.value?.includes(encodedForm)) { return }
 
-    // Need to write — fetch via API to get the SHA
-    const file = await this.filesystem.readFile(publicPath)
-    const list  = file ? (file.content?.value ?? []) : []
-    if (list.includes(encodedForm)) { return } // race condition guard
+    return retryOnConflict(async () => {
+      const file = await this.filesystem.readFile(publicPath)
+      const list = file ? (file.content?.value ?? []) : []
+      if (list.includes(encodedForm)) { return } // race condition guard
 
-    await this.filesystem.writeFile(
-      publicPath,
-      { key: '_public', value: [...list, encodedForm], updatedAt: new Date().toISOString() },
-      'kv: set _public',
-      file?.sha
-    )
+      await this.filesystem.writeFile(
+        publicPath,
+        { key: '_public', value: [...list, encodedForm], updatedAt: new Date().toISOString() },
+        'kv: set _public',
+        file?.sha
+      )
+    })
   }
 
   /**
@@ -2002,37 +2165,41 @@ class GitHubDB {
   /**
    * **Owner mode** — use your personal PAT (or a pool of PATs). Full access to the repo.  
    * Rejects if the supplied token matches a known public token.
-   * @param   {{ owner: string, repo: string, tokens: string[], branch?: string, rawBranches?: string[], basePath?: string, useRaw?: boolean, storage?: SessionState }} config
+   * @param   {{ owner: string, repo: string, tokens: string[], branch?: string, rawBranches?: string[], basePath?: string, useRaw?: boolean, pepper?: string }} config
    * @returns {Promise<GitHubDB>}
    */
-  static async owner({ owner, repo, tokens, branch = 'main', rawBranches = null, basePath = 'data', useRaw = true, storage = null }) {
-    const db = new GitHubDB(
+  static async owner({ owner, repo, tokens, branch = 'main', rawBranches = null, basePath = 'data', useRaw = true, pepper = PASSWORD_PEPPER }) {
+    assertValidConfig({ owner, repo, branch, tokens, basePath })
+    tokens = tokens.map(resolveToken)
+    const database = new GitHubDB(
       new GitHubFilesystem({ owner, repo, tokens, branch, rawBranches }),
-      { basePath, useRaw, enrollToken: false, storage }
+      { basePath, useRaw, enrollToken: false, pepper }
     )
-    for (const token of tokens) await db.assertNotPublicToken(token)
-    await db.checkOrigins()
+    for (const token of tokens) await database.assertNotPublicToken(token)
+    await database.checkOrigins()
     await installWorkflow(owner, repo, tokens, basePath)
-    return db
+    return database
   }
 
   /**
    * **Public mode** — embed a bot token (or pool of tokens) so any visitor can read/write without their own PAT.  
    * On first use each token is registered in the `_kv/_public` list (unless `enrollToken` is `false`).
-   * @param   {{ owner: string, repo: string, publicTokens: string[], branch?: string, rawBranches?: string[], basePath?: string, useRaw?: boolean, enrollToken?: boolean, storage?: SessionState }} config
+   * @param   {{ owner: string, repo: string, publicTokens: string[], branch?: string, rawBranches?: string[], basePath?: string, useRaw?: boolean, enrollToken?: boolean, pepper?: string }} config
    * @returns {Promise<GitHubDB>}
    */
-  static async public({ owner, repo, publicTokens, branch = 'main', rawBranches = null, basePath = 'data', useRaw = true, enrollToken = true, storage = null }) {
-    const db = new GitHubDB(
-      new GitHubFilesystem({ owner, repo, tokens: publicTokens.map(resolveToken), branch, rawBranches }),
-      { basePath, useRaw, enrollToken, storage }
+  static async public({ owner, repo, publicTokens, branch = 'main', rawBranches = null, basePath = 'data', useRaw = true, enrollToken = true, pepper = PASSWORD_PEPPER }) {
+    assertValidConfig({ owner, repo, branch, publicTokens, basePath })
+    const resolvedTokens = publicTokens.map(resolveToken)
+    const database = new GitHubDB(
+      new GitHubFilesystem({ owner, repo, tokens: resolvedTokens, branch, rawBranches }),
+      { basePath, useRaw, enrollToken, pepper }
     )
-    await Promise.all(publicTokens.map(token => db.enrollPublicToken(token).catch(error => {
+    await Promise.all(publicTokens.map(token => database.enrollPublicToken(token).catch(error => {
       console.warn('[GitHubDB] Could not enroll public token:', error)
     })))
-    await db.checkOrigins()
+    await database.checkOrigins()
     await installWorkflow(owner, repo, publicTokens, basePath)
-    return db
+    return database
   }
 
   // ══ Core API ══════════════════════════════════════════════════════════════════
@@ -2084,6 +2251,18 @@ class GitHubDB {
    * })
    */
   permissions(map) {
+    for (const [key, value] of Object.entries(map)) {
+      const validLevel = level => ['public','auth','admin'].includes(level)
+      || (typeof level === 'string' && level.length > 0)
+      || (Array.isArray(level) && level.every(index => typeof index === 'string' && index.length > 0))
+      
+      if (value.read !== undefined && !validLevel(value.read)) {
+        throw new DatabaseError(`Invalid permission read level for "${key}"`, 400)
+      }
+      if (value.write !== undefined && !validLevel(value.write)) {
+        throw new DatabaseError(`Invalid permission write level for "${key}"`, 400)
+      }
+    }
     this.permissionsMap = map
     return this
   }
@@ -2125,25 +2304,27 @@ class GitHubDB {
   /**
    * Hash a secret using PBKDF2-SHA256 (200 000 iterations).
    * @param   {string} secret
-   * @param   {string} [context=''] Optional binding context (e.g. username).
-   * @returns {Promise<string>}     `<salt>:<derivedKey>`
+   * @param   {string} [context='']             Optional binding context (e.g. username).
+   * @param   {string} [pepper=PASSWORD_PEPPER] Optional custom pepper.
+   * @returns {Promise<string>}                 `<salt>:<derivedKey>`
    */
-  static hashSecret(secret, context = '') { return hashSecret(secret, context) }
+  static hashSecret(secret, context = '', pepper = PASSWORD_PEPPER) { return hashSecret(secret, context, pepper) }
 
   /**
    * Verify a plaintext secret against a hash produced by {@link GitHubDB.hashSecret}.
    * @param   {string} secret
-   * @param   {string} storedHash   Value returned by `hashSecret`.
-   * @param   {string} [context=''] Must match the context used during hashing.
+   * @param   {string} storedHash               Value returned by `hashSecret`.
+   * @param   {string} [context='']             Must match the context used during hashing.
+   * @param   {string} [pepper=PASSWORD_PEPPER] Optional custom pepper.
    * @returns {Promise<boolean>}
    */
-  static verifySecret(secret, storedHash, context = '') { return verifySecret(secret, storedHash, context) }
+  static verifySecret(secret, storedHash, context = '', pepper = PASSWORD_PEPPER) { return verifySecret(secret, storedHash, context, pepper) }
 }
 
 
 // ═══ Browser DevTools Helper ══════════════════════════════════════════════════
 
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && !window.GitHubDB) {
   window.GitHubDB = GitHubDB
 }
 
